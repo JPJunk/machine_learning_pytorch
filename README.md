@@ -30,16 +30,16 @@ Mode                 LastWriteTime         Length Name
     Directory: \Py311\Photo_pipeline
 
 Photo organization and repair pipeline with:
-# ## **Stage 1 — FaceNet + HDBSCAN**
-# Identity clusters.
+**Stage 1 — FaceNet + HDBSCAN**
+Identity clusters.
 
-# ## **Stage 2 — CLIP + UMAP + HDBSCAN**
-# Appearance clusters for Stage‑1 noise.
+**Stage 2 — CLIP + UMAP + HDBSCAN**
+Appearance clusters for Stage‑1 noise.
 
-# ## **Stage 3 — CLIP + KMeans**
-# Forced grouping for Stage‑2 noise.
+**Stage 3 — CLIP + KMeans**
+Forced grouping for Stage‑2 noise.
 
-# This produces a global identity ID for every face.
+This produces a global identity ID for every face.
 
 Mode                 LastWriteTime         Length Name
 ----                 -------------         ------ ----
