@@ -1,0 +1,263 @@
+# 📦 **requirements.txt**
+
+This includes only the packages pipeline actually uses — no bloat, no duplicates.
+
+```
+numpy
+pillow
+opencv-python-headless
+onnxruntime
+paddleocr
+easyocr
+scikit-learn
+pdfplumber
+pymupdf
+pdf2image
+huggingface_hub
+matplotlib
+```
+
+---
+
+# 📘 **README.md**
+
+```
+# Advanced OCR Pipeline (DBNet + PaddleOCR + EasyOCR + XY-Cut Layout Engine)
+
+This project implements a full document OCR pipeline combining:
+
+- DBNet (ONNX) for text region detection  
+- EasyOCR word recognition  
+- XY-cut zone detection  
+- Multi-column layout reconstruction  
+- Baseline-aware line grouping  
+- Paragraph merging  
+- Caption and list-item detection  
+- Debug overlays and paragraph overlays  
+- Natural reading order extraction  
+
+The pipeline supports both **PDFs** and **image files**.
+
+---
+
+🧰 ADVANCED OCR PIPELINE — COMPLETE INSTALLATION GUIDE (WINDOWS)
+🗂️ 1. Folder Structure (Recommended)
+Create a working directory like:
+D:\Omat\ocr_project\
+│
+├── advanced_ocr_pipeline.py
+├── paddleocr_onnx\
+├── input\
+└── output\
+You can name things differently, but this structure keeps everything clean.
+
+🐍 2. Install Python (3.10 or 3.11 recommended)
+Download from:
+https://www.python.org/downloads/
+During installation:
+    • ✔ Check “Add Python to PATH” 
+    • ✔ Choose Customize installation 
+    • ✔ Enable pip, venv, tcl/tk, dev tools 
+
+🧪 3. Create a Virtual Environment
+Open PowerShell or cmd:
+cd D:\Omat\ocr_project
+python -m venv venv
+Activate it:
+venv\Scripts\activate
+Prompt should now show (venv).
+
+📦 4. Install Required Python Packages
+Install dependencies:
+⭐ The ONLY Paddle version that works with PaddleX on Python 3.11 is:
+paddlepaddle==3.0.0
+(the PyPI shim that still uses the old executor)
+Everything else must be installed after that.
+Below is the exact, correct, stable install order for a brand‑new venv.
+
+✅ THE DEFINITIVE INSTALL ORDER FOR YOUR OCR PIPELINE (Python 3.11)
+This is the sequence that will reproduce working environment exactly.
+Run these in this order, inside your new venv:
+
+1) Upgrade pip
+python -m pip install --upgrade pip OR
+pip install --upgrade pip wheel setuptools
+
+2) Install core PDF + image dependencies
+pip install pdfplumber
+pip install pymupdf          # provides "fitz"
+pip install pdf2image
+pip install opencv-python
+pip install onnxruntime
+pip install scikit-learn
+pip install symspellpy
+
+3) Install PaddlePaddle first (critical)
+This must be installed before PaddleX or PaddleOCR.
+pip install paddlepaddle==3.0.0 --force-reinstall
+Why?
+Because PaddleX 3.3.x only works with the old executor inside this shim.
+
+4) Install PaddleX
+pip install paddlex==3.3.12 --force-reinstall
+This version is compatible with PaddlePaddle 3.0.0 (shim).
+
+5) Install PaddleOCR
+pip install paddleocr==3.3.3 --force-reinstall
+This version is compatible with PaddleX 3.3.12 and PaddlePaddle 3.0.0.
+
+6) Install EasyOCR
+pip install easyocr
+EasyOCR is independent of Paddle and won’t interfere.
+
+🎯 At this point, Paddle stack is correct and stable.
+Now install the remaining utilities:
+
+7) Install everything else you use
+
+🧪 Verify Paddle is correct
+Run:
+python -c "import paddle, inspect; print(paddle.__version__); print(inspect.getfile(paddle))"
+Expected output:
+3.0.0
+.../OCR_pipeline/venv311/Lib/site-packages/paddle/__init__.py
+If the path points outside the venv, something contaminated the environment.
+
+🧱 Why this order works
+Because:
+    • PaddleX must be installed after PaddlePaddle 
+    • PaddleOCR must be installed after PaddlePaddle 
+    • PaddlePaddle must be the 3.0.0 shim, not the real 3.3.x 
+    • EasyOCR must be installed after everything else 
+    • PDF/image libs must be installed before OCR engines 
+    • Installing Paddle last will break PaddleX 
+    • Installing PaddleOCR first will break PaddleX 
+    • Installing PaddlePaddle 3.3.x will break everything 
+This sequence avoids all of that.
+
+
+🖼️ 5. Install Poppler (Required for pdf2image)
+Poppler is needed to render PDF pages into PNGs.
+Download Windows build:
+https://github.com/oschwartz10612/poppler-windows/releases/ (github.com in Bing)
+Choose the latest poppler‑xx.x.x‑Release‑x64.zip.
+Extract it somewhere stable, e.g.:
+C:\Tools\poppler\
+Inside script, set:
+POPPLER_BIN = r"C:\Tools\poppler\Library\bin"
+Make sure the path points to the folder containing:
+pdftoppm.exe
+pdftocairo.exe
+
+🤖 6. Download ONNX Models (DBNet + CRNN)
+Script already includes:
+from huggingface_hub import snapshot_download
+
+snapshot_download(
+    repo_id="marsena/paddleocr-onnx-models",
+    local_dir="./paddleocr_onnx"
+)
+Run this once:
+python
+>>> from huggingface_hub import snapshot_download
+>>> snapshot_download("marsena/paddleocr-onnx-models", local_dir="paddleocr_onnx")
+You should now have:
+paddleocr_onnx/
+    PP-OCRv5_server_det_infer.onnx
+    PP-OCRv5_server_rec_infer.onnx
+    ...
+These are the DBNet detector + CRNN recognizer.
+
+🧩 7. Verify ONNX Model Paths in the Script
+Script uses:
+CRNN_MODEL_PATH = "paddleocr_onnx/PP-OCRv5_server_rec_infer.onnx"
+Make sure the filenames match exactly.
+
+📁 8. Prepare Input and Output Folders
+Set these in your script:
+INPUT_ROOT = r"D:\Omat\ocr_test"
+OUTPUT_ROOT = r"D:\Omat\ocr_output"
+Create the folders:
+D:\Omat\ocr_test\
+D:\Omat\ocr_output\
+Put PDFs or images into ocr_test.
+
+▶️ 9. Run the Pipeline
+Activate your venv:
+cd D:\Omat\ocr_project
+venv\Scripts\activate
+Run:
+python advanced_ocr_pipeline.py
+The script will:
+    • scan INPUT_ROOT 
+    • process each file 
+    • write results to OUTPUT_ROOT/<filename>/ 
+
+📦 10. Output Files You Will Get (OLD)
+For each file:
+<OUTPUT_ROOT>/<file_stem>/
+│
+├── page_1.png
+├── page_1_overlay.png
+├── page_1_paragraphs.png
+│
+├── embedded_images/
+├── tables/
+│
+├── text.txt
+├── natural_reading_order/
+│   └── text.txt
+│
+└── layout.json
+layout.json includes:
+    • all regions (words + paragraphs) 
+    • zones 
+    • columns 
+    • captions 
+    • list items 
+    • overlays 
+
+🧪 11. Test the Installation (OLD)
+Try a simple PDF:
+D:\Omat\ocr_test\sample.pdf
+Run:
+python advanced_ocr_pipeline.py
+Check:
+    • page_1.png exists 
+    • page_1_overlay.png shows colored boxes 
+    • text.txt contains extracted text 
+    • layout.json contains zones, paragraphs, etc. 
+
+🛠️ 12. Troubleshooting
+❗ Poppler not found
+Check:
+POPPLER_BIN = r"C:\Tools\poppler\Library\bin"
+❗ ONNXRuntime errors
+Make sure:
+pip install onnxruntime
+❗ EasyOCR missing model files
+EasyOCR downloads models on first run.
+If blocked by firewall, manually download:
+~/.EasyOCR/model/
+❗ DBNet returns 0 boxes
+Check that the ONNX models are in the correct folder.
+
+🎉 You’re Fully Set Up
+You now have:
+    • a complete OCR engine 
+    • DBNet + CRNN ONNX models 
+    • PaddleOCR + EasyOCR hybrid recognition 
+    • XY‑cut zone detection 
+    • multi‑column support 
+    • paragraph reconstruction 
+    • caption/list detection 
+    • debug overlays 
+    • natural reading order extraction 
+---
+
+## 📜 License
+
+This project is provided as-is for research and personal use.
+```
+
+
