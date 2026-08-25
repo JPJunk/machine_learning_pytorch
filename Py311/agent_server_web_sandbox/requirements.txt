@@ -1,0 +1,50 @@
+# # Core Web Framework & ASGI Server
+# fastapi>=0.115.0
+# uvicorn[standard]>=0.30.0
+# python-multipart>=0.0.9
+
+# # Data Validation & State Management
+# pydantic>=2.6.0
+
+# # LLM Client (OpenAI-compatible endpoints)
+# openai>=1.40.0
+
+# # Web Scraping & HTTP Requests
+# requests>=2.31.0
+# beautifulsoup4>=4.12.0
+
+# # System Health & Resource Monitoring
+# psutil>=5.9.0
+
+# Core Web & Async Framework
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.8.0
+python-multipart>=0.0.9
+
+# LLM Client (points to local llama.cpp/ollama endpoints)
+openai>=1.38.0
+
+# Web Scraping & Parsing
+requests>=2.32.0
+beautifulsoup4>=4.12.0
+lxml>=5.2.0
+trafilatura>=1.6.0
+pypdf>=6.12.2
+
+# Templates & State
+jinja2>=3.1.0
+
+# System & Memory Utilities
+psutil>=6.0.0
+
+# Embeddings, Similarity & Local AI Models
+numpy>=1.26.0
+scipy>=1.13.0
+transformers>=4.41.0
+torch>=2.3.0
+sentence-transformers>=2.7.0
+langdetect>=1.0.9
+
+# Media Processing
+Pillow>=10.4.0

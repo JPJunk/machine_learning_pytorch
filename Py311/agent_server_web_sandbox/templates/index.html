@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Local Agent Matrix</title>
+
+<!-- Markdown rendering engine -->
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+<!-- TODO: Chatbox width should be constant, so telemetry panel is always visible -->
+<style>
+    :root {
+        --bg-dark: #11111b;
+        --bg-panel: #181825;
+        --border: #313244;
+        --text-main: #cdd6f4;
+        --accent: #b4befe;
+        --accent-hover: #cba6f7;
+        --danger: #f38ba8;
+        --success: #a6e3a1;
+        --warning: #f9e2af;
+    }
+
+    body {
+        margin: 0;
+        padding: 0;
+        background: var(--bg-dark);
+        color: var(--text-main);
+        font-family: sans-serif;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .layout {
+        flex: 1;
+        display: flex;
+        overflow: hidden;
+    }
+
+    #chat-box {
+        flex: 1;
+        overflow-x: scroll;
+        overflow-y: auto;
+        padding: 20px;
+    }
+
+    #telemetry {
+        width: 420px;
+        background: var(--bg-panel);
+        border-left: 1px solid var(--border);
+        display: flex;
+        flex-direction: column;
+    }
+
+    .telemetry-header {
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--border);
+        background: var(--bg-dark);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .telemetry-header h2 {
+        margin: 0;
+        font-size: 11px;
+        color: #a6adc8;
+        letter-spacing: 1.5px;
+        text-transform: uppercase;
+    }
+
+    #clear-logs-btn {
+        background: transparent;
+        border: 1px solid var(--border);
+        color: #a6adc8;
+        padding: 4px 8px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 10px;
+    }
+    #clear-logs-btn:hover { background: var(--border); color: var(--text-main); }
+
+    .vector-recall-log {
+        background: rgba(167, 139, 250, 0.08);
+        border-left: 3px solid #a78bfa;
+        color: #c4b5fd;
+    }
+
+    #log-box {
+        flex: 1;
+        overflow-y: auto;
+        padding: 12px;
+        font-family: 'Courier New', Courier, monospace;
+        font-size: 12px;
+        background: var(--bg-dark);
+    }
+
+    #input-area {
+        padding: 12px 20px;
+        background: var(--bg-panel);
+        border-top: 1px solid var(--border);
+        flex-shrink: 0;
+    }
+
+    .input-row {
+        display: flex;
+        gap: 10px;
+        align-items: stretch;
+    }
+
+    #attach-btn {
+        background: var(--border);
+        border: 1px solid #45475a;
+        padding: 8px 10px;
+        border-radius: 8px;
+        cursor: pointer;
+        color: var(--text-main);
+    }
+
+    #attach-btn:hover { background: #45475a; }
+
+    #user-input {
+        flex: 1;
+        height: 80px;
+        resize: vertical;
+        background: #1e1e2e;
+        border: 1px solid #45475a;
+        border-radius: 8px;
+        padding: 10px 14px;
+        color: var(--text-main);
+        font-size: 14px;
+        outline: none;
+        font-family: inherit;
+    }
+
+    #user-input:focus { border-color: var(--accent); }
+    #user-input::placeholder { color: #585b70; }
+
+    .input-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    #send-btn {
+        width: 100%;
+        background: var(--accent);
+        color: var(--bg-dark);
+        font-weight: bold;
+        padding: 10px;
+        border-radius: 8px;
+        cursor: pointer;
+        border: none;
+    }
+
+    #send-btn:hover { background: var(--accent-hover); }
+
+    #send-btn.stop-mode {
+        background: var(--danger);
+        color: var(--bg-dark);
+    }
+
+    ::-webkit-scrollbar { width: 8px; }
+    ::-webkit-scrollbar-track { background: #1e1e2e; }
+    ::-webkit-scrollbar-thumb { background: #45475a; border-radius: 4px; }
+
+    .agent-msg {
+        background: var(--border);
+        border: 1px solid #45475a;
+        padding: 12px;
+        border-radius: 10px;
+        margin-bottom: 12px;
+        max-width: 90%;
+        position: relative;
+    }
+
+    .copy-btn {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        background: transparent;
+        border: none;
+        color: #a6adc8;
+        cursor: pointer;
+        font-size: 12px;
+        padding: 4px;
+    }
+    .copy-btn:hover { color: var(--text-main); }
+
+    .user-msg {
+        background: var(--accent);
+        color: var(--bg-dark);
+        padding: 12px;
+        border-radius: 10px;
+        margin-bottom: 12px;
+        max-width: 90%;
+        margin-left: auto;
+    }
+
+    header {
+        background: var(--bg-panel);
+        border-bottom: 1px solid var(--border);
+        padding: 12px 20px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .header-btn {
+        background: rgba(243, 139, 168, 0.2);
+        border: 1px solid var(--danger);
+        color: #8b8df3;
+        padding: 6px 10px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: bold;
+    }
+    
+    .header-btn:hover { background: rgba(243, 139, 168, 0.4); }
+
+    /* Markdown rendering inside agent messages */
+    .agent-msg .md-body {
+        color: var(--text-main);
+        font-size: 14px;
+        line-height: 1.75;
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+    }
+
+    .agent-msg .md-body h1, .agent-msg .md-body h2, .agent-msg .md-body h3, 
+    .agent-msg .md-body h4, .agent-msg .md-body h5, .agent-msg .md-body h6 {
+        color: var(--accent);
+        font-weight: 700;
+        margin-top: 1.2em;
+        margin-bottom: 0.5em;
+        line-height: 1.3;
+    }
+    .agent-msg .md-body h1 { font-size: 1.6em; }
+    .agent-msg .md-body h2 { font-size: 1.4em; }
+    .agent-msg .md-body h3 { font-size: 1.25em; }
+
+    .agent-msg .md-body strong { color: #f5e0dc; font-weight: 700; }
+    .agent-msg .md-body em  { font-style: italic; color: #a6adc8; }
+
+    .agent-msg .md-body ul, .agent-msg .md-body ol { padding-left: 1.8em; margin: 0.5em 0; }
+    .agent-msg .md-body li { margin-bottom: 0.25em; }
+
+    .agent-msg .md-body table { border-collapse: collapse; width: 100%; margin: 0.8em 0; font-size: 13px; }
+    .agent-msg .md-body th, .agent-msg .md-body td { border: 1px solid #45475a; padding: 6px 10px; text-align: left; }
+    .agent-msg .md-body th { background: #1e1e2e; color: var(--accent); font-weight: 600; }
+    .agent-msg .md-body td { background: transparent; color: var(--text-main); }
+
+    .agent-msg .md-body pre { background: #1e1e2e; border: 1px solid #45475a; border-radius: 8px; padding: 10px 14px; overflow-x: auto; margin: 0.8em 0; }
+    .agent-msg .md-body code { font-family: 'Courier New', Courier, monospace; font-size: 13px; }
+    .agent-msg .md-body p code { background: #1e1e2e; border: 1px solid #45475a; padding: 1px 6px; border-radius: 4px; font-size: 13px; }
+
+    .agent-msg .md-body blockquote { border-left: 3px solid var(--accent); padding-left: 1em; margin: 0.8em 0; color: #a6adc8; }
+    .agent-msg .md-body hr { border: none; border-top: 1px solid #45475a; margin: 1.2em 0; }
+    .agent-msg .md-body a { color: #94e2d5; text-decoration: underline; }
+    .agent-msg .md-body img { max-width: 100%; border-radius: 6px; margin: 0.5em 0; }
+
+    .streaming-cursor::after { content: '▌'; animation: blink 1s step-end infinite; color: var(--accent); }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    /* TELEMETRY LOG STYLES */
+    .telemetry-entry { padding: 6px 8px; margin-bottom: 4px; border-radius: 4px; font-size: 12px; line-height: 1.5; word-break: break-all; }
+    .tool-call-log { background: rgba(249, 226, 175, 0.08); border-left: 3px solid var(--warning); color: var(--warning); }
+    .tool-result-log { background: rgba(166, 227, 161, 0.08); border-left: 3px solid var(--success); color: var(--success); }
+    .status-log { background: rgba(137, 180, 250, 0.08); border-left: 3px solid #89b4fa; color: #89b4fa; }
+    .error-log { background: rgba(243, 139, 168, 0.08); border-left: 3px solid var(--danger); color: var(--danger); }
+    .system-log { background: rgba(166, 173, 200, 0.08); border-left: 3px solid #a6adc8; color: #a6adc8; }
+
+    /* Utility classes for formatAgentResponse */
+    .mt-3 { margin-top: 0.8em; }
+    .border { border: 1px solid #45475a; }
+    .rounded-lg { border-radius: 8px; }
+    .overflow-hidden { overflow: hidden; }
+    .bg-\[\#11111b\] { background-color: #11111b; }
+    .p-2 { padding: 0.5em; }
+    .font-mono { font-family: 'Courier New', Courier, monospace; }
+    .border-b { border-bottom: 1px solid #45475a; }
+    .max-w-full { max-width: 100%; }
+    .object-contain { object-fit: contain; }
+    .mx-auto { margin-left: auto; margin-right: auto; display: block; }
+</style>
+</head>
+
+<body>
+
+<header>
+    <div style="display:flex; align-items:center; gap:10px;">
+        <div style="width:10px; height:10px; background:#4ade80; border-radius:50%;"></div>
+        <h1 style="margin:0; font-size:18px; color:var(--accent);">Agent</h1>
+    </div>
+
+    <div style="display:flex; align-items:center; gap:12px;">
+        <button id="deep-sleep-btn" class="header-btn deep-sleep">Deep Sleep</button>
+        <button id="sleep-btn" class="header-btn sleep">Sleep</button>
+        <button id="memorise-btn" class="header-btn">Memorise</button>
+    </div>    
+
+    <div style="display:flex; align-items:center; gap:12px;">
+        <button id="clear-btn" class="header-btn">Clear Matrix Memory</button>
+        <span style="font-family:monospace; background:#313244; padding:4px 8px; border-radius:6px; font-size:12px;">
+            127.0.0.1:8000
+        </span>
+    </div>
+</header>
+
+<div class="layout">
+
+    <main style="flex:1; display:flex; flex-direction:column;">
+        <div id="chat-box"></div>
+
+        <div id="input-area">
+            <div class="input-row">
+                <textarea id="user-input" placeholder="Type instructions or paste file paths..."></textarea>
+                <div class="input-actions">
+                    <button id="attach-btn">📎</button>
+                    <input type="file" id="hidden-file-input" class="hidden" style="display:none;">
+                    <button id="send-btn" class="btn btn-primary" style="flex:1;">▶ Execute</button>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Telemetry / Log Panel -->
+    <aside id="telemetry">
+        <div class="telemetry-header">
+            <h2>⚙ LIVE TOOL TELEMETRY</h2>
+            <button id="clear-logs-btn">Clear Logs</button>
+        </div>
+        <div id="log-box"></div>
+    </aside>
+</div>
+
+<!-- Frontend Script Framework -->
+<script>
+    const chatBox = document.getElementById('chat-box');
+    const logBox = document.getElementById('log-box');
+    const userInput = document.getElementById('user-input');
+    const sendBtn = document.getElementById('send-btn');
+    const deepSleepBtn = document.querySelector('.deep-sleep');
+    const sleepBtn = document.querySelector('.sleep');
+    const memoriseBtn = document.getElementById('memorise-btn');
+    const clearBtn = document.getElementById('clear-btn');
+    const attachBtn = document.getElementById('attach-btn');
+    const hiddenFileInput = document.getElementById('hidden-file-input');
+    const clearLogsBtn = document.getElementById('clear-logs-btn');
+
+    const pathRegex = /([a-zA-Z]:[\\/]{1,2}[^"'\s<>\|`\(\)]+\.(?:png|jpg|jpeg|webp))/gi;
+
+    if (typeof marked !== 'undefined') {
+        marked.setOptions({
+            gfm: true,
+            breaks: true,
+            headerIds: false,
+            mather: undefined
+        });
+    }
+
+    function formatAgentResponse(text) {
+        const imagePlaceholders = [];
+        let processed = text.replace(pathRegex, function(match) {
+            const idx = imagePlaceholders.length;
+            let cleanMatch = match.replace(/\\{1,2}/g, '/');
+            imagePlaceholders.push({
+                placeholder: `__IMG_PLACEHOLDER_${idx}__`,
+                html: `<div class="mt-3 border rounded-lg overflow-hidden bg-[#11111b]" style="margin:0.8em 0;">
+                            <p class="text-xs p-2 font-mono bg-[#181825] text-[#a6adc8] border-b border-[#45475a]">🖼️ Render Output Detected: ${cleanMatch}</p>
+                            <img src="/api/view-image?path=${encodeURIComponent(cleanMatch)}" class="max-w-full max-h-96 object-contain block mx-auto p-2" alt="Output File">
+                        </div>`
+            });
+            return imagePlaceholders[idx].placeholder;
+        });
+
+        let rendered;
+        if (typeof marked !== 'undefined') {
+            rendered = marked.parse(processed);
+        } else {
+            rendered = processed.replace(/\n/g, '<br>');
+        }
+
+        for (const img of imagePlaceholders) {
+            rendered = rendered.replace(img.placeholder, img.html);
+        }
+
+        return rendered;
+    }
+
+    function appendMessage(sender, text, isSystem = false) {
+        const msgDiv = document.createElement('div');
+        if (isSystem) {
+            msgDiv.className = "agent-msg";
+            const formatted = formatAgentResponse(text);
+            msgDiv.innerHTML = `<button class="copy-btn" onclick="copyToClipboard(this)">📋</button><p class="text-sm font-semibold text-[#f5e0dc] mb-1">🤖 System Response</p><div class="md-body">${formatted}</div>`;
+        } else {
+            msgDiv.className = "flex justify-end";
+            msgDiv.innerHTML = `<div class="bg-[#b4befe] text-[#11111b] rounded-xl px-4 py-2 max-w-xl text-sm font-medium shadow-sm">${text}</div>`;
+        }
+        chatBox.appendChild(msgDiv);
+        chatBox.scrollTop = chatBox.scrollHeight;
+    }
+
+    function copyToClipboard(btn) {
+        const msgDiv = btn.parentElement;
+        const text = msgDiv.querySelector('.md-body').innerText || msgDiv.innerText;
+        navigator.clipboard.writeText(text).then(() => {
+            btn.textContent = '✅';
+            setTimeout(() => btn.textContent = '📋', 1500);
+        });
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function appendLog(logText, className = "") {
+        const logEntry = document.createElement('div');
+
+        if (typeof logText === 'object' && logText !== null && !Array.isArray(logText)) {
+            if (logText.type === 'tool_call') {
+                logEntry.className = "telemetry-entry tool-call-log";
+                const argsStr = JSON.stringify(logText.args || {});
+                logEntry.innerHTML = `<span style="opacity:0.7">⚙️</span> <strong>${escapeHtml(logText.name)}</strong>(<code>${escapeHtml(argsStr)}</code>)`;
+            } else if (logText.type === 'tool_result') {
+                logEntry.className = "telemetry-entry tool-result-log";
+                const result = typeof logText.data === 'string' ? logText.data : JSON.stringify(logText.data);
+                const truncated = result.substring(0, 250);
+                const suffix = result.length > 250 ? '…' : '';
+                logEntry.innerHTML = `<span style="opacity:0.7">↪️</span> <strong>[${escapeHtml(logText.name)}]</strong> ${escapeHtml(truncated)}<span style="opacity:0.5">${suffix}</span>`;
+            } else if (logText.type === 'vector_recall') {
+                logEntry.className = "telemetry-entry vector-recall-log";
+                const count = logText.count || 0;
+                logEntry.innerHTML = `<span style="opacity:0.7">🧠</span> <strong>Semantic Recall</strong>: ${count} relevant memory${count !== 1 ? 'ies' : 'y'} retrieved from vector store.`;
+            } else if (logText.type === 'status') {
+                logEntry.className = "telemetry-entry status-log";
+                logEntry.innerHTML = `<span style="opacity:0.7">📥</span> ${escapeHtml(String(logText.data))}`;
+            } else if (logText.type === 'error') {
+                logEntry.className = "telemetry-entry error-log";
+                logEntry.innerHTML = `<span style="opacity:0.7">❌</span> ${escapeHtml(String(logText.data))}`;
+            } else if (logText.type === 'done') {
+                logEntry.className = "telemetry-entry system-log";
+                logEntry.innerHTML = `<span style="opacity:0.7">✅</span> <strong>Done</strong> — ${escapeHtml(String(logText.data || ''))}`;
+            } else {
+                logEntry.className = "telemetry-entry system-log";
+                logEntry.textContent = JSON.stringify(logText);
+            }
+        } else {
+            const text = String(logText);
+            if (text.includes("[Tool Call]") || text.includes("⚙️")) {
+                logEntry.className = "telemetry-entry tool-call-log";
+            } else if (text.includes("↪️") || text.includes("TOOL RESPONSE")) {
+                logEntry.className = "telemetry-entry tool-result-log";
+            } else if (text.includes("Error") || text.includes("ERROR")) {
+                logEntry.className = "telemetry-entry error-log";
+            } else {
+                logEntry.className = "telemetry-entry system-log";
+            }
+            logEntry.textContent = text;
+        }
+
+        if (className && !logEntry.className.includes(className)) {
+            logEntry.className += " " + className;
+        }
+
+        logBox.appendChild(logEntry);
+        logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    async function* parseSSE(reader) {
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let currentEventType = 'message';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+
+            const parts = buffer.split('\n\n');
+            buffer = parts.pop() || '';
+
+            for (const part of parts) {
+                const lines = part.split('\n').filter(l => l.trim());
+                let eventType = currentEventType;
+                let dataStr = '';
+
+                for (const line of lines) {
+                    if (line.startsWith('event:')) {
+                        eventType = line.substring(6).trim();
+                        currentEventType = eventType;
+                    } else if (line.startsWith('data:')) {
+                        dataStr = line.substring(5).trim();
+                    }
+                }
+
+                if (dataStr) {
+                    try {
+                        const data = JSON.parse(dataStr);
+                        yield { type: eventType, data };
+                    } catch (e) {
+                        yield { type: eventType, data: dataStr };
+                    }
+                }
+            }
+        }
+
+        if (buffer.trim()) {
+            const lines = buffer.split('\n').filter(l => l.trim());
+            let eventType = currentEventType;
+            let dataStr = '';
+
+            for (const line of lines) {
+                if (line.startsWith('event:')) {
+                    eventType = line.substring(6).trim();
+                    currentEventType = eventType;
+                } else if (line.startsWith('data:')) {
+                    dataStr = line.substring(5).trim();
+                }
+            }
+
+            if (dataStr) {
+                try {
+                    const data = JSON.parse(dataStr);
+                    yield { type: eventType, data };
+                } catch (e) {
+                    yield { type: eventType, data: dataStr };
+                }
+            }
+        }
+    }
+
+    function setButtonState(isRunning) {
+        if (isRunning) {
+            sendBtn.textContent = '⏹ Stop';
+            sendBtn.classList.add('stop-mode');
+        } else {
+            sendBtn.textContent = '▶ Execute';
+            sendBtn.classList.remove('stop-mode');
+        }
+    }
+
+    async function sendMessage() {
+        const prompt = userInput.value.trim();
+        if (!prompt) return;
+
+        appendMessage('user', prompt);
+        userInput.value = '';
+        userInput.disabled = true;
+        sendBtn.disabled = false;
+        appendLog({ type: 'status', data: `Initializing agent stack for prompt...` }, "status-log");
+
+        setButtonState(true);
+
+        const streamingMsgDiv = document.createElement('div');
+        streamingMsgDiv.className = "agent-msg streaming-cursor";
+        streamingMsgDiv.innerHTML = `<button class="copy-btn" onclick="copyToClipboard(this)">📋</button><p class="text-sm font-semibold text-[#f5e0dc] mb-1">🤖 Agent is thinking...</p><div class="md-body"></div>`;
+        chatBox.appendChild(streamingMsgDiv);
+        chatBox.scrollTop = chatBox.scrollHeight;
+
+        const mdBody = streamingMsgDiv.querySelector('.md-body');
+        let accumulatedResponse = '';
+
+        try {
+            const response = await fetch('/api/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: prompt })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            const reader = response.body.getReader();
+            const eventStream = parseSSE(reader);
+
+            for await (const event of eventStream) {
+                const inner = (typeof event.data === 'object' && event.data !== null) ? event.data.data : event.data;
+
+                if (event.type === 'status') {
+                    const dataStr = typeof inner === 'object' ? JSON.stringify(inner) : String(inner);
+                    const recallMatch = dataStr.match(/🧠 Recalled (\d+) relevant memories/);
+                    
+                    if (recallMatch) {
+                        appendLog({ type: 'vector_recall', count: parseInt(recallMatch[1]) }, "vector-recall-log");
+                    } else {
+                        appendLog({ type: 'status', data: inner }, "status-log");
+                    }
+                } else if (event.type === 'tool_call') {
+                    appendLog({ type: 'tool_call', name: inner.name, args: inner.args }, "tool-call-log");
+                } else if (event.type === 'tool_result') {
+                    appendLog({ type: 'tool_result', name: inner.name, data: inner.result }, "tool-result-log");
+                } else if (event.type === 'response') {
+                    accumulatedResponse += inner;
+                    const formatted = formatAgentResponse(accumulatedResponse);
+                    mdBody.innerHTML = formatted;
+                    chatBox.scrollTop = chatBox.scrollHeight;
+                } else if (event.type === 'done') {
+                    if (inner && inner.logs) {
+                        inner.logs.forEach(log => appendLog(log));
+                    }
+                    appendLog({ type: 'done', data: 'Agent execution complete' }, "system-log");
+                    streamingMsgDiv.classList.remove('streaming-cursor');
+                    setButtonState(false);
+                    break;
+                } else if (event.type === 'error') {
+                    appendLog({ type: 'error', data: inner }, "error-log");
+                    streamingMsgDiv.innerHTML = `<button class="copy-btn" onclick="copyToClipboard(this)">📋</button><p class="text-sm font-semibold text-[#f38ba8] mb-1">❌ Error</p><div class="md-body">${escapeHtml(String(inner))}</div>`;
+                    setButtonState(false);
+                    break;
+                }
+            }
+
+            reader.releaseLock();
+
+            if (accumulatedResponse) {
+                streamingMsgDiv.classList.remove('streaming-cursor');
+            } else {
+                mdBody.innerHTML = `<p class="text-sm text-[#f38ba8]">Connection lost or request failed.</p>`;
+            }
+
+        } catch (err) {
+            appendLog(`Error calling backend runtime API: ${err.message}`, "error-log");
+            streamingMsgDiv.classList.remove('streaming-cursor');
+            if (!mdBody.innerHTML) {
+                mdBody.innerHTML = `<p class="text-sm text-[#f38ba8]">Connection lost or request failed.</p>`;
+            }
+        } finally {
+            setButtonState(false);
+            userInput.disabled = false;
+            sendBtn.disabled = false;
+            userInput.focus();
+        }
+    }
+
+    sendBtn.addEventListener('click', async () => {
+        if (sendBtn.classList.contains('stop-mode')) {
+            try { await fetch('/api/abort', { method: 'POST' }); } catch (e) { appendLog(`Abort signal failed: ${e.message}`, "error-log"); }
+            setButtonState(false);
+        } else {
+            sendMessage();
+        }
+    });
+
+    attachBtn.addEventListener('click', () => hiddenFileInput.click());
+    
+    hiddenFileInput.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        appendLog(`Uploading file to local repository server: ${file.name}`, "system-log");
+        
+        const formData = new FormData();
+        formData.append("file", file);
+
+        try {
+            const response = await fetch('/api/upload', { method: 'POST', body: formData });
+            const data = await response.json();
+            
+            if (data.status === "success") {
+                appendLog(`File saved locally to path: ${data.local_path}`, "system-log");
+                
+                if (data.is_image) {
+                    userInput.value = `image:${data.local_path} `;
+                } else {
+                    userInput.value = `Lue tiedosto "${data.local_path}" ja `;
+                }
+                userInput.focus();
+            } else {
+                appendLog(`Upload failed: ${data.error}`, "error-log");
+            }
+        } catch (err) {
+            appendLog(`Network upload exception error: ${err.message}`, "error-log");
+        } finally {
+            hiddenFileInput.value = '';
+        }
+    });
+
+    async function handleMemoryAction(endpoint, confirmMsg) {
+        if (!confirm(confirmMsg)) return;
+        try {
+            const response = await fetch(endpoint, { method: 'POST' });
+            const data = await response.json();
+            
+            chatBox.innerHTML += `
+                <div class="bg-[#313244]/40 border border-[#45475a] rounded-xl p-4 max-w-2xl">
+                    <p class="text-sm font-semibold text-[#f5e0dc] mb-1">🤖 ${endpoint.includes('deep') ? 'Deep' : ''} Sleep/Memorise Complete</p>
+                    <p class="text-sm text-[#a6adc8]">${data.summary || data.result || 'Memory updated successfully.'}</p>
+                </div>`;
+            
+            if (data.logs) data.logs.forEach(log => appendLog(log));
+        } catch (err) {
+            appendLog(`Error during memory operation: ${err.message}`, "error-log");
+        }
+    }
+
+    deepSleepBtn.addEventListener('click', () => handleMemoryAction('/api/deep-sleep', "Deep sleep will consolidate mid-term to long-term memory. Continue?"));
+    sleepBtn.addEventListener('click', () => handleMemoryAction('/api/sleep', "Sleep will consolidate short-term to mid-term memory. Continue?"));
+    memoriseBtn.addEventListener('click', () => handleMemoryAction('/api/memorise', "Memorise current conversation context?"));
+
+    clearBtn.addEventListener('click', async () => {
+        if (!confirm("Flush the current conversation memory?")) return;
+        try {
+            const response = await fetch('/api/clear', { method: 'POST' });
+            const data = await response.json();
+            
+            chatBox.innerHTML = `
+                <div class="bg-[#313244]/40 border border-[#45475a] rounded-xl p-4 max-w-2xl">
+                    <p class="text-sm font-semibold text-[#f5e0dc] mb-1">🤖 Matrix Reinitialized</p>
+                    <p class="text-sm text-[#a6adc8]">Context memory successfully cleared. Ready for fresh local pipeline instructions.</p>
+                </div>`;
+            
+            if (data.logs) data.logs.forEach(log => appendLog(log));
+        } catch (err) {
+            appendLog(`Error flushing memory: ${err.message}`, "error-log");
+        }
+    });
+
+    clearLogsBtn.addEventListener('click', () => {
+        logBox.innerHTML = '';
+        appendLog({ type: 'status', data: 'Telemetry logs cleared.' }, "system-log");
+    });
+
+    userInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
+</script>
+
+</body>
+</html>
