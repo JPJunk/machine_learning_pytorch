@@ -1,3 +1,4 @@
+# \agent_tools\audio_generation.py
 """
 Audio generation module using MusicGen for text-to-music conversion.
 
@@ -14,22 +15,10 @@ LOGGING IMPLEMENTATION: All tool functions now include structured logging via `l
 """
 
 import os
-import logging
-
-# Configure logging to write to app.log in the project root directory
-_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-_LOG_FILE = os.path.join(_BASE_DIR, "app.log")
-
-logging.basicConfig(
-    filename=_LOG_FILE,
-    level=logging.INFO,
-    format="[%(asctime)s] %(levelname)s: %(message)s"
-)
-logger = logging.getLogger(__name__)
-
 import torch
 import scipy.io.wavfile
 from transformers import AutoProcessor, MusicgenForConditionalGeneration
+from .common import logger  # Use the shared logger from common.py
 from .common import sanitize_edge_metadata
 
 OUTPUT_DIR = r"C:\repos\Py_311\agent_server_web\generated_media"
@@ -99,7 +88,7 @@ def generate_music(prompt: str, duration: int = 30) -> str:
         return f"[ERROR] Output path {output_path} is outside the allowed directory."
 
     try:
-        logger.info(f"Generating music for prompt: '{clean_prompt[:50]}...' (duration: {duration}s)")
+        logger.info(f"Generating music for prompt: '{clean_prompt[:200]}...' (duration: {duration}s)")
 
         # Process input text
         inputs = processor(text=[clean_prompt], padding=True, return_tensors="pt")

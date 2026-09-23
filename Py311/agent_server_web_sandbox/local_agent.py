@@ -1,8 +1,8 @@
-# agent_server_memory.py - A local agent server with FastAPI web interface and tools support.
+# local_server.py - A local agent server with FastAPI web interface and tools support.
 
-import logging
-logging.basicConfig(filename="app.log", level=logging.DEBUG, format="[%(asctime)s] %(levelname)s: %(message)s")
-logger = logging.getLogger(__name__)
+# import logging
+# logging.basicConfig(filename="app.log", level=logging.DEBUG, format="[%(asctime)s] %(levelname)s: %(message)s")
+# logger = logging.getLogger(__name__)
 
 import asyncio, base64, datetime, inspect, json
 import os, textwrap, threading, time, uvicorn
@@ -14,7 +14,8 @@ from fastapi import FastAPI, UploadFile, File, HTTPException # , Request
 from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from agent_tools.common import messages_history, SYSTEM_PROMPT
+from agent_tools.common import logger
+from agent_tools.common import messages_history, encoding_prompt, time_lock_prefix, SYSTEM_PROMPT
 from agent_tools.common import client, LLAMA_MODEL
 from agent_tools.common import sanitize_edge_metadata, memory_get_for_prompt, sanitize_edge_metadata 
 from agent_tools.common import estimate_tokens_messages, load_system_prompt, limit_recall_by_tokens
@@ -23,6 +24,9 @@ from agent_tools.memory import memory_consolidate_mid_to_long, memory_consolidat
 from agent_tools.memory import memory_get_for_prompt, memory_store, llm_memory
 from agent_tools.memory import estimate_tokens_messages, check_and_cleanup_memory
 from agent_tools.memory import recall_relevant_context, auto_memorise_and_reset
+from agent_tools.memory import last_user_task
+
+from agent_tools.fs_tools import FILE_STORE
 
 from agent_tools import TOOLS 
 
@@ -40,9 +44,9 @@ MAX_UPLOAD_SIZE = 50 * 1024 * 1024
 LAST_INTERACTION_TIME = time.time()
 
 
+
 class ChatPayload(BaseModel):
     message: str
-
 
 # ----------------  TOOLS ----------------
 def build_tool_schema() -> list[Dict[str, Any]]:
@@ -69,8 +73,21 @@ def build_tool_schema() -> list[Dict[str, Any]]:
     # add("web_deep_search", "Automatic information query pipeline", {"query": {"type": "string"}})
 
     add("read_file", "Read a text file from disk.", {"path": {"type": "string"}})
-    add("write_file", "Write text content to a file (overwrite)", {"path": {"type": "string"}, "content": {"type": "string"}})
-    add("append_file", "Append text content to a file.", {"path": {"type": "string"}, "content": {"type": "string"}})
+    # add("write_file", "Write text content to a file (overwrite)", {"path": {"type": "string"}, "content_b64": {"type": "string", "description": "Base64-encoded UTF-8 text content.  Raw text is forbidden."}})
+    # add("append_file", "Append text content to a file.", {"path": {"type": "string"}, "content_b64": {"type": "string", "description": "Base64-encoded UTF-8 text content.  Raw text is forbidden."}})
+
+    add("store_content", "Store text content and return a reference ID.", {
+        "content": {"type": "string"}
+    })
+    add("write_file", "Write text content to a file (overwrite). Content is provided via a reference.", {
+        "path": {"type": "string"},
+        "content_ref": {"type": "string"}
+    })
+    add("append_file", "Append text content to a file. Content is provided via a reference.", {
+        "path": {"type": "string"},
+        "content_ref": {"type": "string"}
+    })  
+
     add("copy_file", "Copy a file.", {"src": {"type": "string"}, "dst": {"type": "string"}})
     add("move_file", "Move or rename a file.", {"src": {"type": "string"}, "dst": {"type": "string"}})
     add("delete_file", "Delete a file.", {"path": {"type": "string"}})
@@ -151,9 +168,9 @@ def build_tool_schema() -> list[Dict[str, Any]]:
     add("index_folder", "Scan a folder for text/pdf files, index each one, and store embeddings in the local SQLite DB.", {"folder_path": {"type": "string"}})
     add("search_embeddings", "Query the local embedding DB for semantically similar content using cosine similarity.", {"query_text": {"type": "string"}, "top_k": {"type": "integer", "default": 5}})    
 
-    logging.info(f"Built tool schema with {len(schemas)} tools.")
+    logger.info(f"Built tool schema with {len(schemas)} tools.")
     for schema in schemas:
-        logging.info(f"Tool: {schema['function']['name']} - {schema['function']['description']}") 
+        logger.info(f"Tool: {schema['function']['name']} - {schema['function']['description']}") 
     return schemas
 
 TOOLS_SCHEMA = build_tool_schema()
@@ -180,24 +197,56 @@ def _sanitize_args(arguments: dict) -> dict:
     return sanitized
 
 def execute_tool_call(name: str, arguments: dict) -> str:
-    # Sanitize all string arguments before dispatching to the tool
+
+    # --- Handle legacy raw_arguments safely ---
+    if isinstance(arguments, dict) and "raw_arguments" in arguments:
+        try:
+            arguments = json.loads(arguments["raw_arguments"])
+        except Exception:
+            # Fallback: treat as plain text content
+            arguments = {"content": arguments["raw_arguments"]}
+
     sanitized_args = _sanitize_args(arguments)
 
+    # Handle file-writing tools using content_ref
+    if name in ("write_file", "append_file"):
+        if "content_ref" not in sanitized_args:
+            return "[ERROR] Missing content_ref. Use store_content first."
+
+        ref = sanitized_args["content_ref"]
+
+        if ref not in FILE_STORE:
+            return f"[ERROR] Unknown content_ref: {ref}"
+
+        # Retrieve raw content
+        raw_content = FILE_STORE[ref]
+
+        # Encode internally (Qwen never encodes)
+        content_b64 = base64.b64encode(raw_content.encode("utf-8")).decode("ascii")
+
+        # Replace content_ref with content_b64 for the actual tool
+        sanitized_args["content_b64"] = content_b64
+
+        # Remove content_ref so write_file receives only path + content_b64
+        sanitized_args.pop("content_ref", None)
+
     if name not in TOOLS:
-        logging.error(f"Unknown tool requested: {name}")
+        logger.error(f"Unknown tool requested: {name}")
         return f"[ERROR] Unknown tool: {name}"
+
     fn = TOOLS[name]
+
     try:
         result = fn(**sanitized_args)
     except TypeError:
         result = fn(sanitized_args)
     except Exception as e:
-        logging.error(f"Error occurred while executing tool {name}: {e}")
+        logger.error(f"Error occurred while executing tool {name}: {e}")
         return f"[ERROR] Tool {name} failed: {e}"
 
     if isinstance(result, (dict, list)):
         return json.dumps(result, ensure_ascii=False, indent=2)
-    logging.info(f"Tool {name} executed successfully. Result type: {type(result)}, length: {len(str(result))} characters.")
+    logger.info(f"Tool {name} executed successfully. Result type: {type(result)}, length: {len(str(result))} characters.")
     return str(result)
 
 
@@ -210,14 +259,14 @@ _START_TIME = time.time()
 async def api_abort():
     """Signal the running agent to stop generating."""
     _ABORT_REQUESTED.set()
-    logging.info("Abort requested via API.")
+    logger.info("Abort requested via API.")
     return {"status": "abort_requested"}
 
 def _check_abort() -> bool:
     """Return True if abort was requested, then clear the flag for next run."""
     if _ABORT_REQUESTED.is_set():
         _ABORT_REQUESTED.clear()
-        logging.info("Abort flag cleared.")
+        logger.info("Abort flag cleared.")
         return True
     return False
 
@@ -236,7 +285,7 @@ async def api_health():
 @app.post("/api/clear")
 async def clear_session_memory():
     global messages_history
-    logging.info("Clearing session memory.")
+    logger.info("Clearing session memory.")
     messages_history = [{"role": "system", "content": textwrap.dedent(SYSTEM_PROMPT).strip()}]
     return {"status": "cleared", "logs": ["Agent memory stack flushed successfully."]}
 
@@ -283,20 +332,20 @@ CONTEXT:
     mid_term_memory = memory_consolidate_short_to_mid()
     long_term_memory = memory_consolidate_mid_to_long()
 
-    logging.info("Memorisation complete. Short-term memory updated, and consolidation attempted.")
-    logging.info(f"Short-term memory summary: {distilled[:200]}...")
-    logging.info(f"Mid-term memory result: {mid_term_memory}")
-    logging.info(f"Long-term memory result: {long_term_memory}")
+    logger.info("Memorisation complete. Short-term memory updated, and consolidation attempted.")
+    logger.info(f"Short-term memory summary: {distilled[:200]}...")
+    logger.info(f"Mid-term memory result: {mid_term_memory[:200]}...")
+    logger.info(f"Long-term memory result: {long_term_memory[:200]}...")
 
 
     # Rebuild SYSTEM_PROMPT
-    SYSTEM_PROMPT = load_system_prompt() + "\n\n"
+    SYSTEM_PROMPT = load_system_prompt() + "\n\n" + encoding_prompt + "\n\n" + time_lock_prefix + "\n\n"
     mem_rows = memory_get_for_prompt()
     if mem_rows:
         mem_text = "\n\n".join(f"[{lvl.upper()}]\n{summary}" for lvl, summary in mem_rows)
         SYSTEM_PROMPT += "\n\n" + mem_text
 
-    logging.info(f"\n{SYSTEM_PROMPT}\n")
+    logger.info(f"\n{SYSTEM_PROMPT}\n")
 
     # Reset context
     messages_history = [{"role": "system", "content": textwrap.dedent(SYSTEM_PROMPT).strip()}]
@@ -317,14 +366,14 @@ async def api_deep_sleep():
 # ---------------- API ENDPOINTS ----------------
 @app.get("/", response_class=HTMLResponse)
 async def render_interface():
-    logging.info("Serving main interface HTML.")
+    logger.info("Serving main interface HTML.")
     with open("templates/index.html", "r", encoding="utf-8") as f:
         return f.read()
 
 @app.get("/api/view-image")
 async def view_local_image(path: str):
     clean_path = path.strip('"').strip("'").replace("\\", "/")
-    logging.info(f"Received request to view image at path: {clean_path}")
+    logger.info(f"Received request to view image at path: {clean_path}")
     if os.path.exists(clean_path):
         return FileResponse(clean_path)
     return HTMLResponse(status_code=404, content="Image not found")
@@ -348,12 +397,12 @@ async def upload_file_handler(file: UploadFile = File(...)):
         ext_clean = ext.lower()
         
         is_image = ext_clean in [".png", ".jpg", ".jpeg", ".webp"]
-        logging.info(f"File uploaded: {filename_str} (Type: {ext_clean}, Image: {is_image})")
+        logger.info(f"File uploaded: {filename_str} (Type: {ext_clean}, Image: {is_image})")
 
         return {"status": "success", "local_path": file_path, "is_image": is_image}
     except Exception as e:
         import traceback
-        logging.error(f"Error during file upload: {e}")
+        logger.error(f"Error during file upload: {e}")
         return {"status": "error", "error": str(e)}
 
 
@@ -363,7 +412,7 @@ def _sse_chunk(event_type: str, data: Any) -> str:
     payload = json.dumps({"type": event_type, "data": data}, ensure_ascii=False)
     
     # DETAILED LOGGING FOR SSE CHUNKS
-    logger.debug(f"[SSE] Emitting chunk | Type: {event_type} | Payload size: {len(payload)} chars | Preview: {payload[:120]}...")
+    logger.debug(f"[SSE] Emitting chunk | Type: {event_type} | Payload size: {len(payload)} chars | Preview: {payload[:200]}...")
     return f"event: {event_type}\ndata: {payload}\n\n"
 
 async def chat_stream(payload: ChatPayload) -> AsyncGenerator[str, None]:
@@ -384,10 +433,9 @@ async def chat_stream(payload: ChatPayload) -> AsyncGenerator[str, None]:
         yield _sse_chunk("error", "Empty prompt.")
         return
 
-    # --- DYNAAMINEN AIKATUNNISTUS (TIME CONTEXT) GENERATION ---
+    # --- TIME CONTEXT ---
     now_time = datetime.datetime.now()
     current_time_str = now_time.strftime("%A, %B %d, %Y (Aika: %H:%M:%S)")
-
     current_unix_time = time.time()
     elapsed_minutes = int((current_unix_time - LAST_INTERACTION_TIME) / 60)
     LAST_INTERACTION_TIME = current_unix_time
@@ -399,32 +447,27 @@ async def chat_stream(payload: ChatPayload) -> AsyncGenerator[str, None]:
         f"It has been exactly {elapsed_minutes} minutes since the user last interacted with you. "
     )
 
+    # --- IMAGE HANDLING ---
     is_image_syntax = user_input.lower().startswith("image:")
     words = user_input.split()
-    is_raw_image_path = (
-        any(
-            any(words[i].lower().endswith(ext) for ext in [".png", ".jpg", ".jpeg", ".webp"])
-            for i in range(len(words))
-        )
-        if words
-        else False
-    )
+    is_raw_image_path = any(
+        any(words[i].lower().endswith(ext) for ext in [".png", ".jpg", ".jpeg", ".webp"])
+        for i in range(len(words))
+    ) if words else False
     logger.debug(f"[INPUT] is_image_syntax: {is_image_syntax} | is_raw_image_path: {is_raw_image_path}")
+
+
 
     # --- MULTIMODAALINEN JA TEKSTIPOHJAINEN SYÖTTEEN KÄSITTELY ---
     if is_image_syntax or is_raw_image_path:
         if is_image_syntax:
             clean_input = user_input[6:].strip()
             parts = clean_input.split(" ", 1)
-            img_path = parts[0]
+            img_path = parts[0] if len(parts) > 0 else None
             prompt_text = parts[1] if len(parts) > 1 else "Describe this image."
         else:
-            if " " not in user_input:
-                img_path = user_input
-                prompt_text = "Describe this image."
-            else:
-                img_path = None
-                prompt_text = None
+            img_path = user_input if " " not in user_input else None
+            prompt_text = "Describe this image."
 
         if img_path:
             img_path = img_path.strip('"').strip("'").replace("\\", "/")
@@ -437,48 +480,35 @@ async def chat_stream(payload: ChatPayload) -> AsyncGenerator[str, None]:
                 return
 
             try:
-                with open(img_path, "rb") as f:
-                    b64_data = base64.b64encode(f.read()).decode("utf-8")
+                def read_img():
+                    with open(img_path, "rb") as f:
+                        return base64.b64encode(f.read()).decode("utf-8")
+                b64_data = await asyncio.to_thread(read_img)
+                
                 ext = os.path.splitext(img_path)[1].lower().replace(".", "")
-                mime = (
-                    f"image/{ext}"
-                    if ext in ["png", "jpg", "jpeg", ".webp"]
-                    else "image/png"
-                )
+                mime = f"image/{ext}" if ext in ["png", "jpg", "jpeg", "webp"] else "image/png"
                 logger.info(f"[IMAGE] Successfully read file. Size: {len(b64_data)} bytes | MIME: {mime}")
 
                 full_prompt_text = time_lock_prefix + prompt_text
-                logger.debug(f"[MEMORY] Prompt for recall: {full_prompt_text[:100]}...")
-
-                recalled = recall_relevant_context(full_prompt_text, limit=3)
+                logger.debug(f"[MEMORY] Prompt for recall: {full_prompt_text[:200]}...")                
+                recalled = await asyncio.to_thread(recall_relevant_context, full_prompt_text, 3)
                 recalled = limit_recall_by_tokens(recalled)
 
                 if recalled:
-                    memory_block = "\n\n".join(
-                        f"[{m['level'].upper()} (Score: {m['score']})\n{m['text']}]"
-                        for m in recalled
-                    )
+                    memory_block = "\n\n".join(f"[{m['level'].upper()} (Score: {m['score']})\n{m['text']}]" for m in recalled)
                     full_prompt_text = f"RETRIEVED CONTEXT:\n{memory_block}\n\n{full_prompt_text}"
                     logger.info(f"[MEMORY] Recalled {len(recalled)} relevant memories.")
                     yield _sse_chunk("status", f"🧠 Recalled {len(recalled)} relevant memories.")
 
-                logger.info(f"[IMAGE] Injecting multimodal image with prompt: {full_prompt_text[:100]} and path: {img_path}")
-
-                messages_history.append(
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": full_prompt_text},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:{mime};base64,{b64_data}"
-                                },
-                            },
-                        ],
-                    }
-                )
-
+                logger.info(f"[IMAGE] Injecting multimodal image with prompt: {full_prompt_text[:200]} and path: {img_path}")
+                last_user_task = full_prompt_text
+                messages_history.append({
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": full_prompt_text},
+                        {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64_data}"}},
+                    ],
+                })
                 execution_logs.append(f"Injected base64 context stream: {img_path}")
                 logger.info(f"[IMAGE] Multimodal image injected natively into messages_history: {img_path}")
             except Exception as e:
@@ -487,132 +517,195 @@ async def chat_stream(payload: ChatPayload) -> AsyncGenerator[str, None]:
                 yield _sse_chunk("error", error_msg)
                 return
         else:
-            logger.warning(f"[IMAGE] Image syntax detected but no valid path found in input: {user_input[:100]}")
-          
-            recalled = recall_relevant_context(user_input, limit=3)
+            logger.warning(f"[IMAGE] Image syntax detected but no valid path found in input: {user_input[:200]}")
+            recalled = await asyncio.to_thread(recall_relevant_context, user_input, 3)
             if recalled:
-                memory_block = "\n\n".join(
-                    f"[{m['level'].upper()} (Score: {m['score']})\n{m['text']}]"
-                    for m in recalled
-                )
-                user_content = f"RETRIEVED CONTEXT:\n{memory_block}\n\n{time_lock_prefix + user_input}"
+                # KORJAUS: Yhdistetään muistin palaset muuttujaan ennen f-stringiä, jotta vältetään backslash-virhe
+                joined_memories = "\n\n".join(f"[{m['level'].upper()}]: {m['text']}" for m in recalled)
+                user_content = f"RETRIEVED CONTEXT:\n{joined_memories}\n\n{time_lock_prefix + user_input}"
             else:
                 user_content = time_lock_prefix + user_input
-
+                last_user_task = user_content
             messages_history.append({"role": "user", "content": user_content})
     else:
-        logger.info(f"[INPUT] User prompt received: {user_input[:100]}... (Elapsed time since last prompt: {elapsed_minutes} minutes)")
-        messages_history.append(
-            {"role": "user", "content": time_lock_prefix + user_input}
-        )
+        logger.info(f"[INPUT] User prompt received: {user_input[:200]}... (Elapsed time since last prompt: {elapsed_minutes} minutes)")
+        last_user_task = time_lock_prefix + user_input
+        messages_history.append({"role": "user", "content": last_user_task})
 
     yield _sse_chunk("status", f"Received: {user_input[:200]}")
 
-    # --- REASONING AND TOOL CALL EXECUTION LOOP ---
-    logger.info("[LOOP] Entering main response generation loop.")
+    # --- MAIN LLM LOOP ---
     while True:
         if _check_abort():
-            logger.info("[ABORT] User aborted the stream.")
             yield _sse_chunk("status", "Aborted by user.")
             yield _sse_chunk("done", {"logs": execution_logs})
             break
 
-        # --- AUTO-MEMORISATION WHEN CONTEXT TOO LARGE ---
+        # --- CONTEXT SIZE CHECK ---
         context_tokens = estimate_tokens_messages(messages_history)
-        logger.debug(f"[MEMORY] Context token estimation: {context_tokens} tokens.")
-
-        context_tokens = estimate_tokens_messages(messages_history)
+        # print(f"[MEMORY] Current context size: {context_tokens} tokens.")
+        logger.info(f"[MEMORY] Current context size: {context_tokens} tokens.")
         if context_tokens > 24000:
-            logger.info(f"[MEMORY] Context size {context_tokens} > 24k threshold. Triggering auto-memorisation...")
             try:
                 await auto_memorise_and_reset()
-                logger.info("[MEMORY] Auto-memorisation completed successfully.")
+                current_task = (
+                    f"\n\n[NOTE] Auto-memorisation triggered due to context size ({context_tokens} tokens). "
+                    f"Continue from the latest user request.\n\n[LAST USER REQUEST] {last_user_task}"
+                )
+                messages_history.append({"role": "user", "content": current_task})
+                context_tokens = estimate_tokens_messages(messages_history)
+                logger.info(f"[MEMORY] Auto-memorisation completed. New context size: {context_tokens} tokens.")
             except Exception as e:
-                logger.error(f"[MEMORY] Auto-memorisation failed: {e}", exc_info=True)
+                logger.error(f"[MEMORY] Auto-memorisation failed: {e}")
 
-            # try:
-            #     if check_and_cleanup_memory():
-            #         logger.info("[MEMORY] High memory detected. Triggering cleanup.")
-            #         yield _sse_chunk("status", "🧠 High memory detected. Auto-cleanup triggered.")
-            # except Exception as e:
-            #     logger.error(f"[MEMORY] Memory cleanup failed (likely SQLite lock): {e}", exc_info=True)
-
-
+        # --- CALL LLM ---
         try:
-            logger.debug(f"[LLM] Calling API. Model: {LLAMA_MODEL} | Messages count: {len(messages_history)}")
-            response = client.chat.completions.create(
-                model=LLAMA_MODEL,
-                messages=messages_history,
-                tools=TOOLS_SCHEMA,
-                tool_choice="auto",
-                temperature=0.6,
-            )
+            def call_llm():
+                return client.chat.completions.create(
+                    model=LLAMA_MODEL,
+                    messages=messages_history,
+                    tools=TOOLS_SCHEMA,
+                    tool_choice="auto",
+                    temperature=0.6,
+                    stream=True
+                )
+
+            response_stream = await asyncio.to_thread(call_llm)
+
         except Exception as ex:
             error_msg = f"[Runtime Error] API endpoint failure: {ex}"
             logger.error(error_msg, exc_info=True)
             yield _sse_chunk("error", error_msg)
             break
 
-        msg = response.choices[0].message
-        # logging.info(f"LLM response received. Message: {str(msg.content)[:100]}. Tool calls: {len(msg.tool_calls) if msg.tool_calls else 0}")
-        tool_calls_count = len(msg.tool_calls) if msg.tool_calls else 0
-        content_preview = str(msg.content)[:100] if msg.content else "(None)"
-        logger.info(f"[LLM] Response received. Content preview: {content_preview} | Tool calls count: {tool_calls_count}")
+        full_content = ""
+        tool_calls_chunks = {}
 
-        # --- TOOL CALL LOOP ---
-        if msg.tool_calls:
-            logger.info(f"[TOOLS] Processing {len(msg.tool_calls)} tool call(s).")
-            for tool_call in msg.tool_calls:
+        # --- STREAM PARSING ---
+        for chunk in response_stream:
+            if _check_abort():
+                yield _sse_chunk("status", "Aborted by user.")
+                yield _sse_chunk("done", {"logs": execution_logs})
+                return
+
+            choices = getattr(chunk, "choices", None)
+            if not choices and isinstance(chunk, dict):
+                choices = chunk.get("choices")
+            if not choices:
+                continue
+
+            first_choice = choices[0]
+            delta = getattr(first_choice, "delta", None)
+            if delta is None and isinstance(first_choice, dict):
+                delta = first_choice.get("delta")
+            if not delta:
+                continue
+
+            # --- TEXT STREAM ---
+            content_piece = getattr(delta, "content", None)
+            if content_piece is None and isinstance(delta, dict):
+                content_piece = delta.get("content")
+
+            if content_piece:
+                full_content += content_piece
+                yield _sse_chunk("response", content_piece)
+                await asyncio.sleep(0.001)
+
+            # --- TOOL CALL STREAM ---
+            tool_calls = getattr(delta, "tool_calls", None)
+            if tool_calls is None and isinstance(delta, dict):
+                tool_calls = delta.get("tool_calls")
+
+            if tool_calls:
+                for tc in tool_calls:
+                    idx = getattr(tc, "index", None) if not isinstance(tc, dict) else tc.get("index")
+                    if idx is None:
+                        idx = 0
+
+                    if idx not in tool_calls_chunks:
+                        tool_calls_chunks[idx] = {"id": "", "name": "", "arguments": ""}
+
+                    tc_id = getattr(tc, "id", None) if not isinstance(tc, dict) else tc.get("id")
+                    if tc_id:
+                        tool_calls_chunks[idx]["id"] = tc_id
+
+                    func = getattr(tc, "function", None) if not isinstance(tc, dict) else tc.get("function")
+                    if func:
+                        f_name = getattr(func, "name", None) if not isinstance(func, dict) else func.get("name")
+                        f_args = getattr(func, "arguments", None) if not isinstance(func, dict) else func.get("arguments")
+
+                        if f_name:
+                            tool_calls_chunks[idx]["name"] = f_name
+                        if f_args:
+                            tool_calls_chunks[idx]["arguments"] += f_args
+
+        # --- TOOL CALL EXECUTION ---
+        if tool_calls_chunks:
+            built_tool_calls = []
+            for idx, tc_data in tool_calls_chunks.items():
+                built_tool_calls.append({
+                    "id": tc_data["id"],
+                    "type": "function",
+                    "function": {
+                        "name": tc_data["name"],
+                        "arguments": tc_data["arguments"]
+                    }
+                })
+
+            messages_history.append({
+                "role": "assistant",
+                "content": full_content if full_content else None,
+                "tool_calls": built_tool_calls
+            })
+
+            for tc_data in tool_calls_chunks.values():
                 if _check_abort():
-                    logger.info("[ABORT] User aborted during tool execution.")
                     yield _sse_chunk("status", "Aborted by user.")
                     yield _sse_chunk("done", {"logs": execution_logs})
                     return
 
-                name = tool_call.function.name
-                args = json.loads(tool_call.function.arguments or "{}")
+                name = tc_data["name"]
+
+                try:
+                    args = json.loads(tc_data["arguments"] or "{}")
+                except Exception:
+                    args = {"raw_arguments": tc_data["arguments"]}
 
                 log_stmt = f"[Tool Call] -> {name}({args})"
-                print(log_stmt)
                 execution_logs.append(log_stmt)
 
-                logger.info(f"[TOOL] EXECUTING: {name} with arguments: {json.dumps(args)}")
-
+                #TODO: Add only the first 100 characters of the result to avoid flooding the logs
+                # logger.info(f"[TOOL] EXECUTING: {name}({args})")
                 yield _sse_chunk("tool_call", {"name": name, "args": args})
+                await asyncio.sleep(0.001)
 
-                result = execute_tool_call(name, args)
+                # --- EXECUTE TOOL (with file-ref architecture) ---
+                result = await asyncio.to_thread(execute_tool_call, name, args)
 
-                result_preview = str(result)[:100]
-                logger.info(f"[TOOL] RESULT: {name} -> {result_preview}")
+                yield _sse_chunk("tool_result", {"name": name, "result": str(result[:200])})
+                await asyncio.sleep(0.001)
 
-                yield _sse_chunk("tool_result", {"name": name, "result": str(result)})
+                messages_history.append({
+                    "role": "tool",
+                    "tool_call_id": tc_data["id"],
+                    "name": name,
+                    "content": result,
+                })
 
-                messages_history.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "name": name,
-                        "content": result,
-                    }
-                )
-            logger.info("[LOOP] Tool calls processed. Continuing loop for next LLM call.")
             continue
 
-        content = msg.content or ""
-        logger.info(f"[RESPONSE] Final response content received. Length: {len(content)} characters.")
-        messages_history.append({"role": "assistant", "content": content})
+        # --- NORMAL ASSISTANT MESSAGE ---
+        if full_content:
+            messages_history.append({"role": "assistant", "content": full_content})
 
-        yield _sse_chunk("response", content)
-        logger.info("[LOOP] Breaking out of main loop (final response).")
         break
 
-    end_time_str = datetime.datetime.now().strftime("%d.%m.%Y @ %H:%M:%S")
-    logger.info(f"[STREAM] <<< COMPLETED chat_stream at {end_time_str}. Total execution logs: {len(execution_logs)}")
     yield _sse_chunk("done", {"logs": execution_logs})
+
 
 @app.post("/api/chat")
 async def api_chat(payload: ChatPayload):
-    logging.info(f"Chat API called with message: {payload.message[:100]}")
+    logger.info(f"Chat API called with message: {payload.message[:200]}")
     return StreamingResponse(
         chat_stream(payload),
         media_type="text/event-stream",
@@ -627,5 +720,5 @@ async def api_chat(payload: ChatPayload):
 #-------------------- MAIN ENTRY POINT --------------------
 if __name__ == "__main__":
     print("Starting Local Agent Server Web Interface on http://127.0.0.1:8000")
-    logging.info("\n\n\nStarting Local Agent Server Web Interface on http://127.0.0.1:8000")
+    logger.info("\n\n\nStarting Local Agent Server Web Interface on http://127.0.0.1:8000")
     uvicorn.run(app, host="127.0.0.1", port=8000)

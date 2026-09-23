@@ -1,23 +1,10 @@
+# \agent_tools\system_tools.py
 import os
-import logging
-
-# Configure logging to write to app.log in the project root directory
-_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-_LOG_FILE = os.path.join(_BASE_DIR, "app.log")
-
-logging.basicConfig(
-    filename=_LOG_FILE,
-    level=logging.INFO,
-    format="[%(asctime)s] %(levelname)s: %(message)s"
-)
-logger = logging.getLogger(__name__)
-
 import psutil
-
 import gc
 import time
 from typing import Dict, Any, List, Optional
-
+from .common import logger  # Use the shared logger from common.py
 
 def get_memory_usage() -> Dict[str, Any]:
     """

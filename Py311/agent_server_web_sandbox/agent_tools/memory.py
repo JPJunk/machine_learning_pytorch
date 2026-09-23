@@ -1,32 +1,21 @@
 # \agent_tools\memory.py
 import os
-import logging
 import asyncio
-from typing import Any, Dict, List
-
-# Configure logging to write to app.log in the project root directory
-_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-_LOG_FILE = os.path.join(_BASE_DIR, "app.log")
-
-logging.basicConfig(
-    filename=_LOG_FILE,
-    level=logging.INFO,
-    format="[%(asctime)s] %(levelname)s: %(message)s"
-)
-logger = logging.getLogger(__name__)
-
-import datetime, gc, json, os, psutil, sqlite3
+from typing import Any, Dict, List, Optional
+import datetime, gc, json, os, psutil, sqlite3, time
 import numpy as np
 
-from typing import Dict, Any # , List, Optional
-
-from .common import LLAMA_MODEL, EMBED_MODEL_NAME, client
-from .common import messages_history, SYSTEM_PROMPT
+from .common import logger  # Use the shared logger from common.py
+from .common import LLAMA_MODEL, EMBED_MODEL_NAME, client, embed_client
+from .common import messages_history, encoding_prompt, time_lock_prefix, SYSTEM_PROMPT
 from .common import memory_conn, sanitize_edge_metadata, estimate_tokens_messages, load_system_prompt, memory_get_for_prompt
+
+last_user_task = None
 
 # Global locks to avoid race conditions
 context_lock = asyncio.Lock()
 memory_lock = asyncio.Lock()
+consolidation_lock = asyncio.Lock()
 vector_memory_lock = asyncio.Lock()
 
 # ---------------- MEMORY ----------------
@@ -62,7 +51,7 @@ def memory_store(level: str, summary: str):
             "INSERT INTO agent_memory (created_at, level, summary) VALUES (?, ?, ?)",
             (datetime.datetime.utcnow().isoformat(), level, summary),
         )
-    logger.info(f"Inserted {level} level agent_memory ({summary}[:100]) to DB")
+    logger.info(f"Inserted {level} level agent_memory ({summary}[:200]) to DB")
 
 def llm_memory(prompt: str) -> str:
     """
@@ -70,7 +59,7 @@ def llm_memory(prompt: str) -> str:
     No tools, no history, no system prompt — pure summarisation.
     """
     try:
-        logger.info(f"Summarising: ({prompt}[:100])")
+        logger.info(f"Summarising: ({prompt[:200]})")
         resp = client.chat.completions.create(
             model=LLAMA_MODEL,
             messages=[
@@ -194,7 +183,7 @@ def cleanup_memory_db() -> Dict[str, Any]:
         conn.execute("VACUUM")
 
     db_path = os.path.abspath("agent_memory.db")
-    new_size = os.path.getsize(db_path) / (1024**2)
+    new_size = os.path.getsize(db_path) / (1024**2) if os.path.exists(db_path) else 0
 
     logger.info(
         f"[DB] Cleanup complete. Records: {total_records} → short_deleted={deleted_short}, "
@@ -212,7 +201,7 @@ def cleanup_memory_db() -> Dict[str, Any]:
 
 # ---------------- MEMORY CONSOLIDATION ----------------
 async def memory_consolidate_short_to_mid() -> Dict[str, Any]:
-    async with memory_lock:
+    async with consolidation_lock:
         with memory_conn() as conn:
             rows = conn.execute("""
                 SELECT id, summary
@@ -221,7 +210,7 @@ async def memory_consolidate_short_to_mid() -> Dict[str, Any]:
                 ORDER BY created_at DESC
             """).fetchall()
 
-        total_tokens = sum(len(r[1].split()) for r in rows)
+        total_tokens = sum(len(r[1].split()) for r in rows) if rows else 0
 
         if len(rows) < 5 or total_tokens < 2500:
             return {"status": "skipped", "reason": "not enough short-term memory"}
@@ -256,7 +245,7 @@ SHORT-TERM MEMORIES:
         return {"status": "ok", "merged": len(ids)}
 
 async def memory_consolidate_mid_to_long() -> Dict[str, Any]:
-    async with memory_lock:
+    async with consolidation_lock:
         with memory_conn() as conn:
             rows = conn.execute("""
                 SELECT id, summary
@@ -265,13 +254,13 @@ async def memory_consolidate_mid_to_long() -> Dict[str, Any]:
                 ORDER BY created_at DESC
             """).fetchall()
 
-        total_tokens = sum(len(r[1].split()) for r in rows)
+        total_tokens = sum(len(r[1].split()) for r in rows if r[1]) if rows else 0
 
         if len(rows) < 5 or total_tokens < 5000:
             return {"status": "skipped", "reason": "not enough mid-term memory"}
 
         rows = rows[:10]
-        joined = "\n\n---\n\n".join(r[1] for r in rows)
+        joined = "\n\n---\n\n".join(r[1] for r in rows if r[1])
 
         prompt = f"""
 Merge the following MID-TERM memories into a single LONG-TERM memory.
@@ -364,7 +353,7 @@ CONTEXT:
             await memory_consolidate_mid_to_long()
 
         # 3. Rebuild SYSTEM_PROMPT with long-term memory
-        SYSTEM_PROMPT = load_system_prompt() + "\n\n"
+        SYSTEM_PROMPT = load_system_prompt() + "\n\n" + encoding_prompt + "\n\n" + time_lock_prefix + "\n\n"
         mem_rows = memory_get_for_prompt()
         if mem_rows:
             mem_text = "\n\n".join(f"[{lvl.upper()}]\n{summary}" for lvl, summary in mem_rows)
@@ -384,17 +373,30 @@ def _get_raw_embedding(text: str) -> list:
     if not clean_text:
         logger.warning("Empty text provided for embedding")
         return []
-    try:
-        logger.info(f"Fetching embedding for text length {len(clean_text)} using model {EMBED_MODEL_NAME}")
-        resp = client.embeddings.create(
-            model=EMBED_MODEL_NAME, 
-            input=[clean_text]
-        )
-        logger.debug("Successfully retrieved embedding vector")
-        return resp.data[0].embedding
-    except Exception as e:
-        logger.error(f"Ollama embedding request failed: {e}")
-        return []
+    
+    # Use the dedicated embedding client pointing to Ollama
+    for attempt in range(3):
+        try:
+            logger.info(f"Fetching embedding for text length {len(clean_text)} using model {EMBED_MODEL_NAME} (attempt {attempt+1})")
+            resp = embed_client.embeddings.create(
+                model=EMBED_MODEL_NAME, 
+                input=[clean_text]
+            )
+            logger.debug("Successfully retrieved embedding vector")
+            return resp.data[0].embedding
+        except Exception as e:
+            err_str = str(e).lower()
+            if "503" in err_str or "loading model" in err_str or "not_implemented" in err_str:
+                logger.warning(f"[EMBED] Service unavailable/loading, retrying in 2s... ({err_str})")
+                time.sleep(2)
+            elif "invalid json" in err_str or "<html>" in err_str:
+                logger.warning(f"[EMBED] Invalid JSON/HTML response from proxy, retrying in 1s...")
+                time.sleep(1)
+            else:
+                logger.error(f"Ollama embedding request failed: {e}")
+                return []
+    logger.error(f"[EMBED] Max retries reached for text length {len(clean_text)}")
+    return []
 
 def _compute_cosine(a: list, b: list) -> float:
     """Internal mathematical helper. Hidden from the LLM."""
@@ -502,7 +504,6 @@ def recall_relevant_context(user_input: str, limit: int = 3, threshold: float = 
         _, level, text, emb_json = row
         try:
             stored_vec = json.loads(emb_json)
-            # score = _compute_cosine(query_vec, stored_vec)
             WEIGHTS = {"long": 1.3, "mid": 1.1, "short": 1.0}
 
             score = _compute_cosine(query_vec, stored_vec) * WEIGHTS[level]

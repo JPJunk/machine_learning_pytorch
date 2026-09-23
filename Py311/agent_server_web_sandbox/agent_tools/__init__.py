@@ -1,6 +1,6 @@
-# init.py - Initialize the agent tools package and import all tool functions.
+# \agent_tools\init.py - Initialize the agent tools package and import all tool functions.
 from .web_tools import web_search, web_scrape
-from .fs_tools import read_file, write_file, append_file, copy_file, move_file, delete_file, list_files
+from .fs_tools import store_content, read_file, write_file, append_file, copy_file, move_file, delete_file, list_files
 from .text_tools import json_load, json_dump, clean_text, split_lines
 from .embed_tools import compare_similarity, index_file, index_folder, search_embeddings
 from .lang_tools import detect_language, summarize, translate
@@ -27,6 +27,7 @@ from .common import save_agent_state, load_agent_state
 TOOLS = {
     "web_search": web_search,
     "web_scrape": web_scrape,
+    "store_content": store_content,
     "read_file": read_file,
     "write_file": write_file,
     "append_file": append_file,

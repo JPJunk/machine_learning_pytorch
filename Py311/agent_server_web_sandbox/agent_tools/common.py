@@ -1,5 +1,8 @@
+# \agent_tools\common.py
 import logging
 import os
+import copy, datetime, json, re, sqlite3, textwrap, time
+
 
 # Configure logging to write to app.log in the project root directory
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -11,8 +14,6 @@ logging.basicConfig(
     format="[%(asctime)s] %(levelname)s: %(message)s"
 )
 logger = logging.getLogger(__name__)
-
-import copy, datetime, json, re, sqlite3, textwrap
 
 from openai import OpenAI
 
@@ -27,12 +28,18 @@ def sanitize_edge_metadata(text: str) -> str:
     return EDGE_PLACEHOLDER_PATTERN.sub("", text).strip()
 
 # ---------------- CONFIG ----------------
-LLAMA_BASE_URL = os.getenv("LLAMA__BASE_URL", "http://localhost:5001/v1")
-LLAMA_MODEL    = os.getenv("LLAMA__MODEL", "qwen3.6-35b-a3b-uncensored-genesis-v2-apex-mtp")  
-API_KEY     = os.getenv("LLAMA__API_KEY", "not-needed")
+LLAMA_BASE_URL = os.getenv("LLAMA_BASE_URL", "http://localhost:5001/v1")
+LLAMA_MODEL    = os.getenv("LLAMA_MODEL", "Qwen3.6-35B-A3B-Uncensored-Genesis-APEX-Compact")  
+LLAMA_CHAT_URL = os.getenv("LLAMA_CHAT_URL", LLAMA_BASE_URL)
+EMBED_BASE_URL = os.getenv("LLAMA_EMBED_BASE_URL", "http://ollama:11434/v1")
 
-client = OpenAI(base_url=LLAMA_BASE_URL, api_key=API_KEY, timeout=10800.0)
+API_KEY     = os.getenv("LLAMA_API_KEY", "not-needed")
+
 EMBED_MODEL_NAME = os.getenv("LLAMA_EMBED_MODEL", "bge-m3")
+
+# Separate clients for chat and embeddings to avoid routing conflicts
+client = OpenAI(base_url=LLAMA_CHAT_URL, api_key=API_KEY, timeout=10800.0)
+embed_client = OpenAI(base_url=EMBED_BASE_URL, api_key="ollama", timeout=60.0)
 
 
 # ----------------  TIME CONTEXT ----------------
@@ -42,17 +49,23 @@ current_time_str = now_time.strftime("%A, %B %d, %Y (Aika: %H:%M:%S)")
 time_lock_prefix = (
     f"[TIME CONTEXT: The current host system date and time is strictly {current_time_str[:-3]} local time in Kuopio, Finland. "
     f"Treat this as the absolute final local time. Do NOT convert time zones."
-    f"It has been exactly [elapsed_minutes] minutes since the user last interacted with you. "
-    f"Use your internal reasoning guidelines to understand how long the gap was in human terms, and adapt your awareness accordingly.]\n"
+    # f"It has been exactly [elapsed_minutes] minutes since the user last interacted with you. "
+    # f"Use your internal reasoning guidelines to understand how long the gap was in human terms, and adapt your awareness accordingly.]\n"
 )
 
+encoding_prompt = (
+    "You MUST NOT send file content inside JSON tool arguments. "
+    "To write a file: "
+    " 1. First call store_content with the raw text. "
+    " 2. Use the returned reference in write_file or append_file. "
+)
 
 # ---------------- TOKEN ESTIMATION ----------------
 MAX_RECALL_TOKENS = 4000
 
 def estimate_tokens(text: str) -> int:
     tokens = int(len(text.split()) / 0.75)
-    logger.info(f"Current tokens count = {tokens}") 
+    # logger.info(f"Current tokens count = {tokens}") 
     return tokens
 
 def limit_recall_by_tokens(recalled):
@@ -141,7 +154,7 @@ def load_agent_state(path: str = "agent_state.json") -> str:
     
     try:
         with open(path, 'r', encoding='utf-8') as f:
-            state = json.load(f)  # FIXED: was json.load(state)
+            state = json.load(f)
         
         global SYSTEM_PROMPT, messages_history
         
@@ -169,6 +182,13 @@ def load_system_prompt():
     except Exception:
         return ""
 
-SYSTEM_PROMPT = load_system_prompt() + "\n\n" + time_lock_prefix + "\n\n"
+SYSTEM_PROMPT = load_system_prompt() + "\n\n" + encoding_prompt + "\n\n" + time_lock_prefix + "\n\n"
+mem_rows = memory_get_for_prompt()
+if mem_rows:
+    mem_text = "\n\n".join(f"[{lvl.upper()}]\n{summary}" for lvl, summary in mem_rows)
+    SYSTEM_PROMPT += mem_text
+
+logger.info(f"[MEMORY] SYSTEM_PROMPT rebuilt. Length: {len(SYSTEM_PROMPT)}")
+
 logger.info(f"\n{SYSTEM_PROMPT}\n")
 messages_history = [{"role": "system", "content": textwrap.dedent(SYSTEM_PROMPT).strip()}]

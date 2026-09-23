@@ -1,23 +1,10 @@
 # agent_tools/audio_tools.py - Native Whisper.cpp and Piper TTS Integration
 import os
-import logging
-
-# Configure logging to write to app.log in the project root directory
-_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-_LOG_FILE = os.path.join(_BASE_DIR, "app.log")
-
-logging.basicConfig(
-    filename=_LOG_FILE,
-    level=logging.INFO,
-    format="[%(asctime)s] %(levelname)s: %(message)s"
-)
-logger = logging.getLogger(__name__)
-
 import subprocess
 import wave
 import numpy as np
 from .common import sanitize_edge_metadata
-
+from .common import logger  # Use the shared logger from common.py
 
 def _is_safe_path(path: str, base_dir: str = "C:/test") -> bool:
     """Check if the resolved path is within the allowed base directory."""
@@ -180,7 +167,7 @@ def speak_text(text: str, output_path: str = "C:/repos/Py_311/agent_server_web/g
     piper_exe = "C:/piper/piper.exe"
     model_path = "C:/piper/fi_FI-harri-medium.onnx"
 
-    logger.info(f"Synthesizing text to speech: '{clean_text[:50]}...' -> {clean_output}")
+    logger.info(f"Synthesizing text to speech: '{clean_text[:200]}...' -> {clean_output}")
     
     if not clean_text:
         logger.warning("Empty text provided for TTS")

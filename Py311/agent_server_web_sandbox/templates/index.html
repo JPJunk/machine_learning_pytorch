@@ -1,736 +1,431 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Local Agent Matrix</title>
+    <meta charset="UTF-8">
+    <title>Local Agent Console</title>
+    <style>
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+            background: #1e1e2e; 
+            color: #cdd6f4; 
+            margin: 0; 
+            padding: 20px; 
+            display: flex; 
+            flex-direction: column; 
+            height: 100vh; 
+            box-sizing: border-box; 
+        }
+        
+        /* Otsikkopalkki */
+        .header-bar {
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            margin-bottom: 15px;
+        }
+        .header-bar h2 { margin: 0; color: #b4befe; font-size: 22px; }
+        .header-buttons { display: flex; gap: 10px; }
 
-<!-- Markdown rendering engine -->
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+        /* Pääkontti - Kiinteät suhteet Flexillä ilman vaaraa sivuttaisesta leviämisestä */
+        .main-container { 
+            display: flex; 
+            flex: 1; 
+            gap: 20px; 
+            min-height: 0; 
+            width: 100%;
+        }
+        
+        /* Vakioleveydet: Chat 75% (3/4 osaa), Telemetry 25% (1/4 osaa) */
+        .chat-section { 
+            flex: 0 0 75%; 
+            display: flex; 
+            flex-direction: column; 
+            background: #252538; 
+            border-radius: 8px; 
+            padding: 15px; 
+            box-sizing: border-box; 
+        }
+        .telemetry-section { 
+            flex: 0 0 25%; 
+            display: flex; 
+            flex-direction: column; 
+            background: #181825; 
+            border-radius: 8px; 
+            padding: 15px; 
+            box-sizing: border-box; 
+            border-left: 4px solid #89b4fa; 
+        }
+        
+        h3 { margin-top: 0; color: #89b4fa; border-bottom: 1px solid #45475a; padding-bottom: 5px; font-size: 16px; }
+        
+        /* Chat-tulostelaatikko */
+        #chat-output { 
+            flex: 1; 
+            overflow-y: auto; 
+            background: #11111b; 
+            border-radius: 6px; 
+            padding: 15px; 
+            margin-bottom: 15px; 
+            font-family: monospace; 
+            font-size: 14px; 
+            box-sizing: border-box;
+        }
+        
+        /* Telemetrian tulostelaatikko */
+        #telemetry-output { 
+            flex: 1; 
+            overflow-y: auto; 
+            background: #11111b; 
+            border-radius: 6px; 
+            padding: 15px; 
+            font-family: monospace; 
+            font-size: 12px; 
+            color: #a6e3a1; 
+            box-sizing: border-box;
+        }
 
-<!-- TODO: Chatbox width should be constant, so telemetry panel is always visible -->
-<style>
-    :root {
-        --bg-dark: #11111b;
-        --bg-panel: #181825;
-        --border: #313244;
-        --text-main: #cdd6f4;
-        --accent: #b4befe;
-        --accent-hover: #cba6f7;
-        --danger: #f38ba8;
-        --success: #a6e3a1;
-        --warning: #f9e2af;
-    }
+        /* Erilliset viestikuplat (Vanhasta versiosta paranneltuna) */
+        .message-block {
+            margin-bottom: 15px;
+            padding: 12px;
+            border-radius: 6px;
+            position: relative;
+            white-space: pre-wrap;
+            line-height: 1.5;
+        }
+        .user-message {
+            background: #313244;
+            border-left: 4px solid #b4befe;
+            color: #cdd6f4;
+        }
+        .agent-message {
+            background: #1e1e2e;
+            border-left: 4px solid #a6e3a1;
+            color: #cdd6f4;
+        }
+        
+        /* Kopiointinappi agentin kuplille */
+        .copy-btn {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: #45475a;
+            color: #cdd6f4;
+            border: none;
+            padding: 4px 8px;
+            font-size: 11px;
+            border-radius: 4px;
+            cursor: pointer;
+            opacity: 0.6;
+            transition: opacity 0.2s;
+        }
+        .copy-btn:hover { opacity: 1; background: #585b70; }
 
-    body {
-        margin: 0;
-        padding: 0;
-        background: var(--bg-dark);
-        color: var(--text-main);
-        font-family: sans-serif;
-        height: 100vh;
-        display: flex;
-        flex-direction: column;
-    }
+        /* Syöttöalueen pääkontti - asettaa tekstialueen ja napit vierekkäin */
+        .input-container { 
+            display: flex; 
+            flex-direction: row; /* Muutettu: sisältö vierekkäin */
+            gap: 12px; 
+            background: #11111b;
+            padding: 12px;
+            border-radius: 6px;
+            align-items: stretch; /* Venyttää napit saman korkuiseksi kuin textarea */
+        }
+        
+        /* Suurennettu tekstialue - joustaa viemään vapaan tilan vasemmalla */
+        textarea { 
+            flex: 1; /* Vie kaiken vapaan tilan vasemmalta */
+            height: 152px; /* Korkeus sovitettu kahdelle napille */
+            background: #313244; 
+            border: 1px solid #45475a; 
+            border-radius: 6px; 
+            color: #cdd6f4; 
+            padding: 10px; 
+            font-size: 14px; 
+            resize: none;
+            box-sizing: border-box;
+            font-family: inherit;
+        }
+        textarea:focus { outline: 1px solid #89b4fa; }
+        
+        /* Painikesarake oikealla puolella - asettaa napit alekkain */
+        .button-column {
+            display: flex;
+            flex-direction: column; /* Alekkain */
+            gap: 8px; /* Väli nappien välissä */
+            justify-content: space-between;
+            flex-shrink: 0; /* Estää nappien koon muuttumisen */
+        }
 
-    .layout {
-        flex: 1;
-        display: flex;
-        overflow: hidden;
-    }
+        /* Varmistetaan että molemmat napit ovat saman levyisiä sarakkeessa */
+        .button-column button {
+            width: 150px; /* Kiinteä leveys napeille, voit muuttaa tarvittaessa */
+            height: 68px; /* Korkeus jaettu tasan */
+            padding: 0 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
 
-    #chat-box {
-        flex: 1;
-        overflow-x: scroll;
-        overflow-y: auto;
-        padding: 20px;
-    }
+        
+        .action-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
 
-    #telemetry {
-        width: 420px;
-        background: var(--bg-panel);
-        border-left: 1px solid var(--border);
-        display: flex;
-        flex-direction: column;
-    }
-
-    .telemetry-header {
-        padding: 10px 14px;
-        border-bottom: 1px solid var(--border);
-        background: var(--bg-dark);
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-
-    .telemetry-header h2 {
-        margin: 0;
-        font-size: 11px;
-        color: #a6adc8;
-        letter-spacing: 1.5px;
-        text-transform: uppercase;
-    }
-
-    #clear-logs-btn {
-        background: transparent;
-        border: 1px solid var(--border);
-        color: #a6adc8;
-        padding: 4px 8px;
-        border-radius: 4px;
-        cursor: pointer;
-        font-size: 10px;
-    }
-    #clear-logs-btn:hover { background: var(--border); color: var(--text-main); }
-
-    .vector-recall-log {
-        background: rgba(167, 139, 250, 0.08);
-        border-left: 3px solid #a78bfa;
-        color: #c4b5fd;
-    }
-
-    #log-box {
-        flex: 1;
-        overflow-y: auto;
-        padding: 12px;
-        font-family: 'Courier New', Courier, monospace;
-        font-size: 12px;
-        background: var(--bg-dark);
-    }
-
-    #input-area {
-        padding: 12px 20px;
-        background: var(--bg-panel);
-        border-top: 1px solid var(--border);
-        flex-shrink: 0;
-    }
-
-    .input-row {
-        display: flex;
-        gap: 10px;
-        align-items: stretch;
-    }
-
-    #attach-btn {
-        background: var(--border);
-        border: 1px solid #45475a;
-        padding: 8px 10px;
-        border-radius: 8px;
-        cursor: pointer;
-        color: var(--text-main);
-    }
-
-    #attach-btn:hover { background: #45475a; }
-
-    #user-input {
-        flex: 1;
-        height: 80px;
-        resize: vertical;
-        background: #1e1e2e;
-        border: 1px solid #45475a;
-        border-radius: 8px;
-        padding: 10px 14px;
-        color: var(--text-main);
-        font-size: 14px;
-        outline: none;
-        font-family: inherit;
-    }
-
-    #user-input:focus { border-color: var(--accent); }
-    #user-input::placeholder { color: #585b70; }
-
-    .input-actions {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-    }
-
-    #send-btn {
-        width: 100%;
-        background: var(--accent);
-        color: var(--bg-dark);
-        font-weight: bold;
-        padding: 10px;
-        border-radius: 8px;
-        cursor: pointer;
-        border: none;
-    }
-
-    #send-btn:hover { background: var(--accent-hover); }
-
-    #send-btn.stop-mode {
-        background: var(--danger);
-        color: var(--bg-dark);
-    }
-
-    ::-webkit-scrollbar { width: 8px; }
-    ::-webkit-scrollbar-track { background: #1e1e2e; }
-    ::-webkit-scrollbar-thumb { background: #45475a; border-radius: 4px; }
-
-    .agent-msg {
-        background: var(--border);
-        border: 1px solid #45475a;
-        padding: 12px;
-        border-radius: 10px;
-        margin-bottom: 12px;
-        max-width: 90%;
-        position: relative;
-    }
-
-    .copy-btn {
-        position: absolute;
-        top: 8px;
-        right: 8px;
-        background: transparent;
-        border: none;
-        color: #a6adc8;
-        cursor: pointer;
-        font-size: 12px;
-        padding: 4px;
-    }
-    .copy-btn:hover { color: var(--text-main); }
-
-    .user-msg {
-        background: var(--accent);
-        color: var(--bg-dark);
-        padding: 12px;
-        border-radius: 10px;
-        margin-bottom: 12px;
-        max-width: 90%;
-        margin-left: auto;
-    }
-
-    header {
-        background: var(--bg-panel);
-        border-bottom: 1px solid var(--border);
-        padding: 12px 20px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-
-    .header-btn {
-        background: rgba(243, 139, 168, 0.2);
-        border: 1px solid var(--danger);
-        color: #8b8df3;
-        padding: 6px 10px;
-        border-radius: 6px;
-        cursor: pointer;
-        font-size: 12px;
-        font-weight: bold;
-    }
-    
-    .header-btn:hover { background: rgba(243, 139, 168, 0.4); }
-
-    /* Markdown rendering inside agent messages */
-    .agent-msg .md-body {
-        color: var(--text-main);
-        font-size: 14px;
-        line-height: 1.75;
-        word-wrap: break-word;
-        overflow-wrap: break-word;
-    }
-
-    .agent-msg .md-body h1, .agent-msg .md-body h2, .agent-msg .md-body h3, 
-    .agent-msg .md-body h4, .agent-msg .md-body h5, .agent-msg .md-body h6 {
-        color: var(--accent);
-        font-weight: 700;
-        margin-top: 1.2em;
-        margin-bottom: 0.5em;
-        line-height: 1.3;
-    }
-    .agent-msg .md-body h1 { font-size: 1.6em; }
-    .agent-msg .md-body h2 { font-size: 1.4em; }
-    .agent-msg .md-body h3 { font-size: 1.25em; }
-
-    .agent-msg .md-body strong { color: #f5e0dc; font-weight: 700; }
-    .agent-msg .md-body em  { font-style: italic; color: #a6adc8; }
-
-    .agent-msg .md-body ul, .agent-msg .md-body ol { padding-left: 1.8em; margin: 0.5em 0; }
-    .agent-msg .md-body li { margin-bottom: 0.25em; }
-
-    .agent-msg .md-body table { border-collapse: collapse; width: 100%; margin: 0.8em 0; font-size: 13px; }
-    .agent-msg .md-body th, .agent-msg .md-body td { border: 1px solid #45475a; padding: 6px 10px; text-align: left; }
-    .agent-msg .md-body th { background: #1e1e2e; color: var(--accent); font-weight: 600; }
-    .agent-msg .md-body td { background: transparent; color: var(--text-main); }
-
-    .agent-msg .md-body pre { background: #1e1e2e; border: 1px solid #45475a; border-radius: 8px; padding: 10px 14px; overflow-x: auto; margin: 0.8em 0; }
-    .agent-msg .md-body code { font-family: 'Courier New', Courier, monospace; font-size: 13px; }
-    .agent-msg .md-body p code { background: #1e1e2e; border: 1px solid #45475a; padding: 1px 6px; border-radius: 4px; font-size: 13px; }
-
-    .agent-msg .md-body blockquote { border-left: 3px solid var(--accent); padding-left: 1em; margin: 0.8em 0; color: #a6adc8; }
-    .agent-msg .md-body hr { border: none; border-top: 1px solid #45475a; margin: 1.2em 0; }
-    .agent-msg .md-body a { color: #94e2d5; text-decoration: underline; }
-    .agent-msg .md-body img { max-width: 100%; border-radius: 6px; margin: 0.5em 0; }
-
-    .streaming-cursor::after { content: '▌'; animation: blink 1s step-end infinite; color: var(--accent); }
-    @keyframes blink { 50% { opacity: 0; } }
-
-    /* TELEMETRY LOG STYLES */
-    .telemetry-entry { padding: 6px 8px; margin-bottom: 4px; border-radius: 4px; font-size: 12px; line-height: 1.5; word-break: break-all; }
-    .tool-call-log { background: rgba(249, 226, 175, 0.08); border-left: 3px solid var(--warning); color: var(--warning); }
-    .tool-result-log { background: rgba(166, 227, 161, 0.08); border-left: 3px solid var(--success); color: var(--success); }
-    .status-log { background: rgba(137, 180, 250, 0.08); border-left: 3px solid #89b4fa; color: #89b4fa; }
-    .error-log { background: rgba(243, 139, 168, 0.08); border-left: 3px solid var(--danger); color: var(--danger); }
-    .system-log { background: rgba(166, 173, 200, 0.08); border-left: 3px solid #a6adc8; color: #a6adc8; }
-
-    /* Utility classes for formatAgentResponse */
-    .mt-3 { margin-top: 0.8em; }
-    .border { border: 1px solid #45475a; }
-    .rounded-lg { border-radius: 8px; }
-    .overflow-hidden { overflow: hidden; }
-    .bg-\[\#11111b\] { background-color: #11111b; }
-    .p-2 { padding: 0.5em; }
-    .font-mono { font-family: 'Courier New', Courier, monospace; }
-    .border-b { border-bottom: 1px solid #45475a; }
-    .max-w-full { max-width: 100%; }
-    .object-contain { object-fit: contain; }
-    .mx-auto { margin-left: auto; margin-right: auto; display: block; }
-</style>
+        /* Painikkeiden tyylittelyt */
+        button { 
+            background: #89b4fa; 
+            border: none; 
+            color: #11111b; 
+            padding: 10px 18px; 
+            font-weight: bold; 
+            border-radius: 6px; 
+            cursor: pointer; 
+            font-size: 13px;
+        }
+        button:hover { background: #b4befe; }
+        .btn-secondary { background: #45475a; color: #cdd6f4; }
+        .btn-secondary:hover { background: #585b70; }
+        #abort-btn { background: #f38ba8; }
+        #abort-btn:hover { background: #e06c75; }
+        
+        /* Telemetrian tilatunnisteet */
+        .system-status { color: #fab387; font-style: italic; margin-bottom: 8px; font-size: 11px; }
+        .tool-log { color: #f9e2af; margin: 6px 0; padding-left: 8px; border-left: 2px solid #f9e2af; }
+        .tool-res { color: #94e2d5; margin-bottom: 12px; padding-left: 8px; font-size: 11px; opacity: 0.95; }
+    </style>
 </head>
-
 <body>
 
-<header>
-    <div style="display:flex; align-items:center; gap:10px;">
-        <div style="width:10px; height:10px; background:#4ade80; border-radius:50%;"></div>
-        <h1 style="margin:0; font-size:18px; color:var(--accent);">Agent</h1>
+    <div class="header-bar">
+        <h2>🤖 Local Agent Workspace</h2>
+        <div class="header-buttons">
+            <button class="btn-secondary" onclick="clearMemory()">Tyhjennä muisti</button>
+            <button class="btn-secondary" onclick="memorizeContext()">Pakota muistiin tallennus</button>
+            <button id="abort-btn" onclick="abortAgent()">ABORT</button>
+        </div>
     </div>
 
-    <div style="display:flex; align-items:center; gap:12px;">
-        <button id="deep-sleep-btn" class="header-btn deep-sleep">Deep Sleep</button>
-        <button id="sleep-btn" class="header-btn sleep">Sleep</button>
-        <button id="memorise-btn" class="header-btn">Memorise</button>
-    </div>    
-
-    <div style="display:flex; align-items:center; gap:12px;">
-        <button id="clear-btn" class="header-btn">Clear Matrix Memory</button>
-        <span style="font-family:monospace; background:#313244; padding:4px 8px; border-radius:6px; font-size:12px;">
-            127.0.0.1:8000
-        </span>
-    </div>
-</header>
-
-<div class="layout">
-
-    <main style="flex:1; display:flex; flex-direction:column;">
-        <div id="chat-box"></div>
-
-        <div id="input-area">
-            <div class="input-row">
-                <textarea id="user-input" placeholder="Type instructions or paste file paths..."></textarea>
-                <div class="input-actions">
-                    <button id="attach-btn">📎</button>
-                    <input type="file" id="hidden-file-input" class="hidden" style="display:none;">
-                    <button id="send-btn" class="btn btn-primary" style="flex:1;">▶ Execute</button>
-                </div>
-            </div>
-        </div>
-    </main>
-
-    <!-- Telemetry / Log Panel -->
-    <aside id="telemetry">
-        <div class="telemetry-header">
-            <h2>⚙ LIVE TOOL TELEMETRY</h2>
-            <button id="clear-logs-btn">Clear Logs</button>
-        </div>
-        <div id="log-box"></div>
-    </aside>
-</div>
-
-<!-- Frontend Script Framework -->
-<script>
-    const chatBox = document.getElementById('chat-box');
-    const logBox = document.getElementById('log-box');
-    const userInput = document.getElementById('user-input');
-    const sendBtn = document.getElementById('send-btn');
-    const deepSleepBtn = document.querySelector('.deep-sleep');
-    const sleepBtn = document.querySelector('.sleep');
-    const memoriseBtn = document.getElementById('memorise-btn');
-    const clearBtn = document.getElementById('clear-btn');
-    const attachBtn = document.getElementById('attach-btn');
-    const hiddenFileInput = document.getElementById('hidden-file-input');
-    const clearLogsBtn = document.getElementById('clear-logs-btn');
-
-    const pathRegex = /([a-zA-Z]:[\\/]{1,2}[^"'\s<>\|`\(\)]+\.(?:png|jpg|jpeg|webp))/gi;
-
-    if (typeof marked !== 'undefined') {
-        marked.setOptions({
-            gfm: true,
-            breaks: true,
-            headerIds: false,
-            mather: undefined
-        });
-    }
-
-    function formatAgentResponse(text) {
-        const imagePlaceholders = [];
-        let processed = text.replace(pathRegex, function(match) {
-            const idx = imagePlaceholders.length;
-            let cleanMatch = match.replace(/\\{1,2}/g, '/');
-            imagePlaceholders.push({
-                placeholder: `__IMG_PLACEHOLDER_${idx}__`,
-                html: `<div class="mt-3 border rounded-lg overflow-hidden bg-[#11111b]" style="margin:0.8em 0;">
-                            <p class="text-xs p-2 font-mono bg-[#181825] text-[#a6adc8] border-b border-[#45475a]">🖼️ Render Output Detected: ${cleanMatch}</p>
-                            <img src="/api/view-image?path=${encodeURIComponent(cleanMatch)}" class="max-w-full max-h-96 object-contain block mx-auto p-2" alt="Output File">
-                        </div>`
-            });
-            return imagePlaceholders[idx].placeholder;
-        });
-
-        let rendered;
-        if (typeof marked !== 'undefined') {
-            rendered = marked.parse(processed);
-        } else {
-            rendered = processed.replace(/\n/g, '<br>');
-        }
-
-        for (const img of imagePlaceholders) {
-            rendered = rendered.replace(img.placeholder, img.html);
-        }
-
-        return rendered;
-    }
-
-    function appendMessage(sender, text, isSystem = false) {
-        const msgDiv = document.createElement('div');
-        if (isSystem) {
-            msgDiv.className = "agent-msg";
-            const formatted = formatAgentResponse(text);
-            msgDiv.innerHTML = `<button class="copy-btn" onclick="copyToClipboard(this)">📋</button><p class="text-sm font-semibold text-[#f5e0dc] mb-1">🤖 System Response</p><div class="md-body">${formatted}</div>`;
-        } else {
-            msgDiv.className = "flex justify-end";
-            msgDiv.innerHTML = `<div class="bg-[#b4befe] text-[#11111b] rounded-xl px-4 py-2 max-w-xl text-sm font-medium shadow-sm">${text}</div>`;
-        }
-        chatBox.appendChild(msgDiv);
-        chatBox.scrollTop = chatBox.scrollHeight;
-    }
-
-    function copyToClipboard(btn) {
-        const msgDiv = btn.parentElement;
-        const text = msgDiv.querySelector('.md-body').innerText || msgDiv.innerText;
-        navigator.clipboard.writeText(text).then(() => {
-            btn.textContent = '✅';
-            setTimeout(() => btn.textContent = '📋', 1500);
-        });
-    }
-
-    function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
-
-    function appendLog(logText, className = "") {
-        const logEntry = document.createElement('div');
-
-        if (typeof logText === 'object' && logText !== null && !Array.isArray(logText)) {
-            if (logText.type === 'tool_call') {
-                logEntry.className = "telemetry-entry tool-call-log";
-                const argsStr = JSON.stringify(logText.args || {});
-                logEntry.innerHTML = `<span style="opacity:0.7">⚙️</span> <strong>${escapeHtml(logText.name)}</strong>(<code>${escapeHtml(argsStr)}</code>)`;
-            } else if (logText.type === 'tool_result') {
-                logEntry.className = "telemetry-entry tool-result-log";
-                const result = typeof logText.data === 'string' ? logText.data : JSON.stringify(logText.data);
-                const truncated = result.substring(0, 250);
-                const suffix = result.length > 250 ? '…' : '';
-                logEntry.innerHTML = `<span style="opacity:0.7">↪️</span> <strong>[${escapeHtml(logText.name)}]</strong> ${escapeHtml(truncated)}<span style="opacity:0.5">${suffix}</span>`;
-            } else if (logText.type === 'vector_recall') {
-                logEntry.className = "telemetry-entry vector-recall-log";
-                const count = logText.count || 0;
-                logEntry.innerHTML = `<span style="opacity:0.7">🧠</span> <strong>Semantic Recall</strong>: ${count} relevant memory${count !== 1 ? 'ies' : 'y'} retrieved from vector store.`;
-            } else if (logText.type === 'status') {
-                logEntry.className = "telemetry-entry status-log";
-                logEntry.innerHTML = `<span style="opacity:0.7">📥</span> ${escapeHtml(String(logText.data))}`;
-            } else if (logText.type === 'error') {
-                logEntry.className = "telemetry-entry error-log";
-                logEntry.innerHTML = `<span style="opacity:0.7">❌</span> ${escapeHtml(String(logText.data))}`;
-            } else if (logText.type === 'done') {
-                logEntry.className = "telemetry-entry system-log";
-                logEntry.innerHTML = `<span style="opacity:0.7">✅</span> <strong>Done</strong> — ${escapeHtml(String(logText.data || ''))}`;
-            } else {
-                logEntry.className = "telemetry-entry system-log";
-                logEntry.textContent = JSON.stringify(logText);
-            }
-        } else {
-            const text = String(logText);
-            if (text.includes("[Tool Call]") || text.includes("⚙️")) {
-                logEntry.className = "telemetry-entry tool-call-log";
-            } else if (text.includes("↪️") || text.includes("TOOL RESPONSE")) {
-                logEntry.className = "telemetry-entry tool-result-log";
-            } else if (text.includes("Error") || text.includes("ERROR")) {
-                logEntry.className = "telemetry-entry error-log";
-            } else {
-                logEntry.className = "telemetry-entry system-log";
-            }
-            logEntry.textContent = text;
-        }
-
-        if (className && !logEntry.className.includes(className)) {
-            logEntry.className += " " + className;
-        }
-
-        logBox.appendChild(logEntry);
-        logBox.scrollTop = logBox.scrollHeight;
-    }
-
-    async function* parseSSE(reader) {
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let currentEventType = 'message';
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-
-            const parts = buffer.split('\n\n');
-            buffer = parts.pop() || '';
-
-            for (const part of parts) {
-                const lines = part.split('\n').filter(l => l.trim());
-                let eventType = currentEventType;
-                let dataStr = '';
-
-                for (const line of lines) {
-                    if (line.startsWith('event:')) {
-                        eventType = line.substring(6).trim();
-                        currentEventType = eventType;
-                    } else if (line.startsWith('data:')) {
-                        dataStr = line.substring(5).trim();
-                    }
-                }
-
-                if (dataStr) {
-                    try {
-                        const data = JSON.parse(dataStr);
-                        yield { type: eventType, data };
-                    } catch (e) {
-                        yield { type: eventType, data: dataStr };
-                    }
-                }
-            }
-        }
-
-        if (buffer.trim()) {
-            const lines = buffer.split('\n').filter(l => l.trim());
-            let eventType = currentEventType;
-            let dataStr = '';
-
-            for (const line of lines) {
-                if (line.startsWith('event:')) {
-                    eventType = line.substring(6).trim();
-                    currentEventType = eventType;
-                } else if (line.startsWith('data:')) {
-                    dataStr = line.substring(5).trim();
-                }
-            }
-
-            if (dataStr) {
-                try {
-                    const data = JSON.parse(dataStr);
-                    yield { type: eventType, data };
-                } catch (e) {
-                    yield { type: eventType, data: dataStr };
-                }
-            }
-        }
-    }
-
-    function setButtonState(isRunning) {
-        if (isRunning) {
-            sendBtn.textContent = '⏹ Stop';
-            sendBtn.classList.add('stop-mode');
-        } else {
-            sendBtn.textContent = '▶ Execute';
-            sendBtn.classList.remove('stop-mode');
-        }
-    }
-
-    async function sendMessage() {
-        const prompt = userInput.value.trim();
-        if (!prompt) return;
-
-        appendMessage('user', prompt);
-        userInput.value = '';
-        userInput.disabled = true;
-        sendBtn.disabled = false;
-        appendLog({ type: 'status', data: `Initializing agent stack for prompt...` }, "status-log");
-
-        setButtonState(true);
-
-        const streamingMsgDiv = document.createElement('div');
-        streamingMsgDiv.className = "agent-msg streaming-cursor";
-        streamingMsgDiv.innerHTML = `<button class="copy-btn" onclick="copyToClipboard(this)">📋</button><p class="text-sm font-semibold text-[#f5e0dc] mb-1">🤖 Agent is thinking...</p><div class="md-body"></div>`;
-        chatBox.appendChild(streamingMsgDiv);
-        chatBox.scrollTop = chatBox.scrollHeight;
-
-        const mdBody = streamingMsgDiv.querySelector('.md-body');
-        let accumulatedResponse = '';
-
-        try {
-            const response = await fetch('/api/chat', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: prompt })
-            });
-
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
-
-            const reader = response.body.getReader();
-            const eventStream = parseSSE(reader);
-
-            for await (const event of eventStream) {
-                const inner = (typeof event.data === 'object' && event.data !== null) ? event.data.data : event.data;
-
-                if (event.type === 'status') {
-                    const dataStr = typeof inner === 'object' ? JSON.stringify(inner) : String(inner);
-                    const recallMatch = dataStr.match(/🧠 Recalled (\d+) relevant memories/);
-                    
-                    if (recallMatch) {
-                        appendLog({ type: 'vector_recall', count: parseInt(recallMatch[1]) }, "vector-recall-log");
-                    } else {
-                        appendLog({ type: 'status', data: inner }, "status-log");
-                    }
-                } else if (event.type === 'tool_call') {
-                    appendLog({ type: 'tool_call', name: inner.name, args: inner.args }, "tool-call-log");
-                } else if (event.type === 'tool_result') {
-                    appendLog({ type: 'tool_result', name: inner.name, data: inner.result }, "tool-result-log");
-                } else if (event.type === 'response') {
-                    accumulatedResponse += inner;
-                    const formatted = formatAgentResponse(accumulatedResponse);
-                    mdBody.innerHTML = formatted;
-                    chatBox.scrollTop = chatBox.scrollHeight;
-                } else if (event.type === 'done') {
-                    if (inner && inner.logs) {
-                        inner.logs.forEach(log => appendLog(log));
-                    }
-                    appendLog({ type: 'done', data: 'Agent execution complete' }, "system-log");
-                    streamingMsgDiv.classList.remove('streaming-cursor');
-                    setButtonState(false);
-                    break;
-                } else if (event.type === 'error') {
-                    appendLog({ type: 'error', data: inner }, "error-log");
-                    streamingMsgDiv.innerHTML = `<button class="copy-btn" onclick="copyToClipboard(this)">📋</button><p class="text-sm font-semibold text-[#f38ba8] mb-1">❌ Error</p><div class="md-body">${escapeHtml(String(inner))}</div>`;
-                    setButtonState(false);
-                    break;
-                }
-            }
-
-            reader.releaseLock();
-
-            if (accumulatedResponse) {
-                streamingMsgDiv.classList.remove('streaming-cursor');
-            } else {
-                mdBody.innerHTML = `<p class="text-sm text-[#f38ba8]">Connection lost or request failed.</p>`;
-            }
-
-        } catch (err) {
-            appendLog(`Error calling backend runtime API: ${err.message}`, "error-log");
-            streamingMsgDiv.classList.remove('streaming-cursor');
-            if (!mdBody.innerHTML) {
-                mdBody.innerHTML = `<p class="text-sm text-[#f38ba8]">Connection lost or request failed.</p>`;
-            }
-        } finally {
-            setButtonState(false);
-            userInput.disabled = false;
-            sendBtn.disabled = false;
-            userInput.focus();
-        }
-    }
-
-    sendBtn.addEventListener('click', async () => {
-        if (sendBtn.classList.contains('stop-mode')) {
-            try { await fetch('/api/abort', { method: 'POST' }); } catch (e) { appendLog(`Abort signal failed: ${e.message}`, "error-log"); }
-            setButtonState(false);
-        } else {
-            sendMessage();
-        }
-    });
-
-    attachBtn.addEventListener('click', () => hiddenFileInput.click());
-    
-    hiddenFileInput.addEventListener('change', async (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-
-        appendLog(`Uploading file to local repository server: ${file.name}`, "system-log");
-        
-        const formData = new FormData();
-        formData.append("file", file);
-
-        try {
-            const response = await fetch('/api/upload', { method: 'POST', body: formData });
-            const data = await response.json();
+    <div class="main-container">
+        <!-- CHATOSIO (75% Kiinteä leveys) -->
+        <div class="chat-section">
+            <h3>Keskustelu (Reaaliaikainen)</h3>
+            <div id="chat-output"></div>
             
-            if (data.status === "success") {
-                appendLog(`File saved locally to path: ${data.local_path}`, "system-log");
+            <!-- Suurennettu tekstinsyöttöalue painikkeet oikealla puolella alekkain -->
+            <div class="input-container">
+                <textarea id="user-input" placeholder="Kirjoita viesti tai anna kuvan polku muodossa 'image:C:/kuva.png kerro tästä'...\nLähetä painamalla Ctrl+Enter tai klikkaamalla Lähetä." onkeydown="if(event.key==='Enter' && event.ctrlKey) { event.preventDefault(); sendMessage(); }"></textarea>
                 
-                if (data.is_image) {
-                    userInput.value = `image:${data.local_path} `;
-                } else {
-                    userInput.value = `Lue tiedosto "${data.local_path}" ja `;
-                }
-                userInput.focus();
-            } else {
-                appendLog(`Upload failed: ${data.error}`, "error-log");
+                <div class="button-column">
+                    <button class="btn-secondary" onclick="triggerFileUpload()">📎 Liitä tiedosto</button>
+                    <button onclick="sendMessage()">Lähetä</button>
+                </div>
+                
+                <!-- Piilotettu input tiedostojen valintaa varten -->
+                <input type="file" id="hidden-file-input" style="display: none;" onchange="handleFileSelection()">
+            </div>
+
+        </div>
+
+        <!-- TELEMETRIAOSIO (25% Kiinteä leveys) -->
+        <div class="telemetry-section">
+            <h3>Työkalujen suoritusloki (Telemetry)</h3>
+            <div id="telemetry-output"></div>
+        </div>
+    </div>
+
+    <script>
+        const chatOutput = document.getElementById('chat-output');
+        const telemetryOutput = document.getElementById('telemetry-output');
+        const userInput = document.getElementById('user-input');
+        const hiddenFileInput = document.getElementById('hidden-file-input');
+
+        let currentAgentBubble = null; // Pitää kirjaa parhaillaan striimattavasta agentin kuplasta
+
+        function appendTelemetry(htmlContent) {
+            telemetryOutput.innerHTML += htmlContent;
+            telemetryOutput.scrollTop = telemetryOutput.scrollHeight;
+        }
+
+        // Kopiointitoiminto viestikuplille
+        function copyToClipboard(text, btn) {
+            navigator.clipboard.writeText(text).then(() => {
+                const oldText = btn.textContent;
+                btn.textContent = "Kopioitu!";
+                setTimeout(() => { btn.textContent = oldText; }, 2000);
+            });
+        }
+
+        // Luo uuden tyylitellyn viestilohkon chat-ikkunaan
+        function createMessageBlock(role, initialText = "") {
+            const block = document.createElement('div');
+            block.className = `message-block ${role}-message`;
+            
+            const textSpan = document.createElement('span');
+            textSpan.className = "text-content";
+            textSpan.textContent = initialText;
+            block.appendChild(textSpan);
+
+            if (role === 'agent') {
+                const copyBtn = document.createElement('button');
+                copyBtn.className = 'copy-btn';
+                copyBtn.textContent = 'Kopioi';
+                copyBtn.onclick = () => copyToClipboard(textSpan.textContent, copyBtn);
+                block.appendChild(copyBtn);
             }
-        } catch (err) {
-            appendLog(`Network upload exception error: ${err.message}`, "error-log");
-        } finally {
-            hiddenFileInput.value = '';
+
+            chatOutput.appendChild(block);
+            chatOutput.scrollTop = chatOutput.scrollHeight;
+            return textSpan;
         }
-    });
 
-    async function handleMemoryAction(endpoint, confirmMsg) {
-        if (!confirm(confirmMsg)) return;
-        try {
-            const response = await fetch(endpoint, { method: 'POST' });
-            const data = await response.json();
-            
-            chatBox.innerHTML += `
-                <div class="bg-[#313244]/40 border border-[#45475a] rounded-xl p-4 max-w-2xl">
-                    <p class="text-sm font-semibold text-[#f5e0dc] mb-1">🤖 ${endpoint.includes('deep') ? 'Deep' : ''} Sleep/Memorise Complete</p>
-                    <p class="text-sm text-[#a6adc8]">${data.summary || data.result || 'Memory updated successfully.'}</p>
-                </div>`;
-            
-            if (data.logs) data.logs.forEach(log => appendLog(log));
-        } catch (err) {
-            appendLog(`Error during memory operation: ${err.message}`, "error-log");
+        // Avaa tiedostonvalintaikkunan
+        function triggerFileUpload() {
+            hiddenFileInput.click();
         }
-    }
 
-    deepSleepBtn.addEventListener('click', () => handleMemoryAction('/api/deep-sleep', "Deep sleep will consolidate mid-term to long-term memory. Continue?"));
-    sleepBtn.addEventListener('click', () => handleMemoryAction('/api/sleep', "Sleep will consolidate short-term to mid-term memory. Continue?"));
-    memoriseBtn.addEventListener('click', () => handleMemoryAction('/api/memorise', "Memorise current conversation context?"));
+        // Käsittelee valitun tiedoston ja lisää sen polun tekstialueeseen (kuten vanhassa versiossa)
+        async function handleFileSelection() {
+            if (!hiddenFileInput.files.length) return;
+            const file = hiddenFileInput.files[0];
+            
+            appendTelemetry(`<div class="system-status">📤 Ladataan tiedostoa: ${file.name}...</div>`);
+            
+            const formData = new FormData();
+            formData.append("file", file);
 
-    clearBtn.addEventListener('click', async () => {
-        if (!confirm("Flush the current conversation memory?")) return;
-        try {
-            const response = await fetch('/api/clear', { method: 'POST' });
-            const data = await response.json();
-            
-            chatBox.innerHTML = `
-                <div class="bg-[#313244]/40 border border-[#45475a] rounded-xl p-4 max-w-2xl">
-                    <p class="text-sm font-semibold text-[#f5e0dc] mb-1">🤖 Matrix Reinitialized</p>
-                    <p class="text-sm text-[#a6adc8]">Context memory successfully cleared. Ready for fresh local pipeline instructions.</p>
-                </div>`;
-            
-            if (data.logs) data.logs.forEach(log => appendLog(log));
-        } catch (err) {
-            appendLog(`Error flushing memory: ${err.message}`, "error-log");
+            try {
+                const response = await fetch('/api/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                
+                if (data.status === "success") {
+                    appendTelemetry(`<div class="system-status">✅ Tiedosto ladattu onnistuneesti palvelimelle!</div>`);
+                    // Jos kyseessä on kuva, käytetään image: syntaksia, muuten liitetään polku sellaisenaan
+                    if (data.is_image) {
+                        userInput.value += `image:${data.local_path} `;
+                    } else {
+                        userInput.value += `${data.local_path} `;
+                    }
+                    userInput.focus();
+                } else {
+                    appendTelemetry(`<div style="color:#f38ba8;">❌ Lataus epäonnistui: ${data.error}</div>`);
+                }
+            } catch (err) {
+                console.error(err);
+                appendTelemetry(`<div style="color:#f38ba8;">❌ Virhe tiedonsiirrossa ladattaessa tiedostoa.</div>`);
+            }
+            // Nollataan valinta, jotta sama tiedosto voidaan valita heti uudelleen
+            hiddenFileInput.value = "";
         }
-    });
 
-    clearLogsBtn.addEventListener('click', () => {
-        logBox.innerHTML = '';
-        appendLog({ type: 'status', data: 'Telemetry logs cleared.' }, "system-log");
-    });
+        async function sendMessage() {
+            const message = userInput.value.trim();
+            if (!message) return;
 
-    userInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
-</script>
+            userInput.value = '';
+            
+            // Luodaan käyttäjän viestikupla
+            createMessageBlock('user', `User: ${message}`);
+            
+            // Valmistellaan agentin viestikuplan paikka tulevaa striimiä varten
+            appendTelemetry(`<div class="system-status">[${new Date().toLocaleTimeString()}] Lähetetään viesti...</div>`);
+            currentAgentBubble = createMessageBlock('agent', 'Agent: ');
 
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: message })
+                });
+
+                if (!response.body) {
+                    currentAgentBubble.textContent += "\n[Virhe: Striimausta ei tueta palvelimelta]";
+                    return;
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder("utf-8");
+                let buffer = "";
+
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const parts = buffer.split("\n\n");
+                    buffer = parts.pop();
+
+                    for (const part of parts) {
+                        if (!part.trim()) continue;
+                        
+                        const lines = part.split("\n");
+                        let eventType = "";
+                        let dataContent = "";
+
+                        for (const line of lines) {
+                            if (line.startsWith("event:")) eventType = line.replace("event:", "").trim();
+                            if (line.startsWith("data:")) dataContent = line.replace("data:", "").trim();
+                        }
+
+                        if (!dataContent) continue;
+                        
+                        try {
+                            const parsed = JSON.parse(dataContent);
+                            const payload = parsed.data;
+
+                            if (eventType === "response") {
+                                // Päivitetään olemassa olevaa agentin kuplaa kirjain kirjaimelta
+                                currentAgentBubble.textContent += payload;
+                                chatOutput.scrollTop = chatOutput.scrollHeight;
+                            } else if (eventType === "status") {
+                                appendTelemetry(`<div class="system-status">ℹ️ ${payload}</div>`);
+                            } else if (eventType === "tool_call") {
+                                appendTelemetry(`<div class="tool-log">🛠️ <b>Kutsutaan työkalua:</b> ${payload.name}<br><small>Argumentit: ${JSON.stringify(payload.args)}</small></div>`);
+                            } else if (eventType === "tool_result") {
+                                const shortRes = payload.result.length > 400 ? payload.result.substring(0, 400) + "..." : payload.result;
+                                appendTelemetry(`<div class="tool-res">✅ <b>Tulos [${payload.name}]:</b> <pre style="margin:4px 0; background:#0b0b11; padding:6px; border-radius:4px; overflow-x:auto;">${shortRes}</pre></div>`);
+                            } else if (eventType === "error") {
+                                appendTelemetry(`<div style="color:#f38ba8;">❌ Virhe: ${payload}</div>`);
+                            } else if (eventType === "done") {
+                                appendTelemetry(`<div class="system-status">🏁 Suoritus valmis.</div>`);
+                            }
+                        } catch (e) {
+                            console.error("Palasen käsittelyvirhe: ", e);
+                        }
+                    }
+                }
+
+            } catch (error) {
+                console.error("Yhteysvirhe:", error);
+                appendTelemetry(`<div style="color:#f38ba8;">❌ Yhteysvirhe palvelimeen.</div>`);
+            }
+        }
+
+        async function abortAgent() {
+            appendTelemetry(`<div style="color:#f38ba8;">🛑 Pyydetään suorituksen keskeytystä...</div>`);
+            await fetch('/api/abort', { method: 'POST' });
+        }
+
+        async function clearMemory() {
+            if(confirm("Haluatko varmasti tyhjentää istunnon muistin?")) {
+                await fetch('/api/clear', { method: 'POST' });
+                chatOutput.innerHTML = "";
+                createMessageBlock('agent', "Istunnon muisti nollattu. Valmiina uusiin tehtäviin.");
+                telemetryOutput.innerHTML = `<div class="system-status">Muisti nollattu.</div>`;
+            }
+        }
+
+        async function memorizeContext() {
+            appendTelemetry(`<div class="system-status">🧠 Tiivistetään ja tallennetaan nykyistä kontekstia pitkäaikaismuistiin...</div>`);
+            const res = await fetch('/api/memorise', { method: 'POST' });
+            const data = await res.json();
+            appendTelemetry(`<div class="system-status">✅ Tallennettu! Tiivistelmä: ${data.summary}</div>`);
+        }
+    </script>
 </body>
 </html>

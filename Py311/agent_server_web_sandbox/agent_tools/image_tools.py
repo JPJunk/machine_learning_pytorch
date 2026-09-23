@@ -1,27 +1,15 @@
 # agent_tools/image_tools.py - Image analysis and generation tools using Qwen-VL and ComfyUI.
 import os
-import logging
-
-# Configure logging to write to app.log in the project root directory
-_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-_LOG_FILE = os.path.join(_BASE_DIR, "app.log")
-
-logging.basicConfig(
-    filename=_LOG_FILE,
-    level=logging.INFO,
-    format="[%(asctime)s] %(levelname)s: %(message)s"
-)
-logger = logging.getLogger(__name__)
-
 import base64
 import json
 import time
 from openai import OpenAI
 import requests
+from .common import logger  # Use the shared logger from common.py
 from .common import sanitize_edge_metadata
 
 LLAMA_IMAGE_BASE_URL = os.getenv("LLAMA_IMAGE_BASE_URL", "http://localhost:5001/v1")
-LLAMA_MODEL = os.getenv("LLAMA__MODEL", "qwen3.6-35b-a3b-uncensored-genesis-v2-apex-mtp")
+LLAMA_MODEL = os.getenv("LLAMA_MODEL", "mmproj-Qwen3.6-35B-A3B-Uncensored-Genesis-f16")
 COMFYUI_URL = os.getenv("COMFYUI_URL", "http://127.0.0.1:8188")
 
 client = OpenAI(base_url=LLAMA_IMAGE_BASE_URL, api_key=os.getenv("LLAMA_IMAGE_API_KEY", "not-needed"))

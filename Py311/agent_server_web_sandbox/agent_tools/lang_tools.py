@@ -1,39 +1,18 @@
 # agent_tools/lang_tools.py - Language detection and translation tools for the agent server, utilizing OPUS-CAT for high-speed translations and a local LLM for summarization.
 import os
-import logging
-
-# Configure logging to write to app.log in the project root directory
-_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-_LOG_FILE = os.path.join(_BASE_DIR, "app.log")
-
-logging.basicConfig(
-    filename=_LOG_FILE,
-    level=logging.INFO,
-    format="[%(asctime)s] %(levelname)s: %(message)s"
-)
-logger = logging.getLogger(__name__)
-
 import re
 from openai import OpenAI
 
 import torch
 from transformers import MarianMTModel, MarianTokenizer
 
-
+from .common import logger  # Use the shared logger from common.py
 from .common import LLAMA_BASE_URL, LLAMA_MODEL
 from .common import sanitize_edge_metadata
 
-# Point to the official OPUS-CAT global plugin bridge service endpoint
-# OPUS_CAT_URL = os.getenv("OPUS_CAT_URL", "http://localhost:8500/MTRestService/TranslatePost")
-
-# Standard environment routing matching your agent server core configuration
-# LLAMA_BASE_URL = os.getenv("LLAMA__BASE_URL", "http://localhost:5001/v1")
-# LLAMA_MODEL = os.getenv("LLAMA__MODEL", "qwen3.6-35b-a3b-uncensored-genesis-v2-apex-mtp")
-# LLAMA_MODEL = os.getenv("LLAMA__MODEL", "Carwin-MoE-Nano-GGUF")
-
 client = OpenAI(
     base_url=LLAMA_BASE_URL,
-    api_key=os.getenv("LLAMA__API_KEY", "not-needed")
+    api_key=os.getenv("LLAMA_API_KEY", "not-needed")
 )
 
 # TODO: Future enhancement - Add support for additional languages 
@@ -68,6 +47,16 @@ def detect_language(text: str) -> str:
     if re.search(r"\b(und|nicht|ich|du|wir|sie|das|ein|eine|ist|sind|mit|von)\b", text_lower):
         logger.info("Detected German language")
         return "de"
+
+    # Italian structural indicators
+    if re.search(r"\b(e|non|io|tu|lui|lei|noi|voi|loro|è|sono|con|di)\b", text_lower):
+        logger.info("Detected Italian language")
+        return "it"
+
+    # French structural indicators
+    if re.search(r"\b(et|pas|je|tu|il|elle|nous|vous|ils|elles|est|sont|avec|de)\b", text_lower):
+        logger.info("Detected French language")
+        return "fr"
     
     # Spanish structural indicators
     if re.search(r"\b(y|no|yo|tú|él|ella|nosotros|vosotros|ellos|es|son|con|de)\b", text_lower):
@@ -149,12 +138,12 @@ def translate(text: str, target_lang: str) -> str:
         model_name = "Helsinki-NLP/opus-mt-en-sv"
     elif target_lang in ["es", "spa", "spanish"]:
         model_name = "Helsinki-NLP/opus-mt-en-es"
-    # elif target_lang in ["fr", "fre", "french"]:
-    #     model_name = "Helsinki-NLP/opus-mt-en-fr"
-    # elif target_lang in ["it", "ita", "italian"]:
-    #     model_name = "Helsinki-NLP/opus-mt-en-it"
-    # elif target_lang in ["de", "ger", "german"]:
-    #     model_name = "Helsinki-NLP/opus-mt-en-de"
+    elif target_lang in ["fr", "fre", "french"]:
+        model_name = "Helsinki-NLP/opus-mt-en-fr"
+    elif target_lang in ["it", "ita", "italian"]:
+        model_name = "Helsinki-NLP/opus-mt-en-it"
+    elif target_lang in ["de", "ger", "german"]:
+        model_name = "Helsinki-NLP/opus-mt-en-de"
     elif target_lang in ["ru", "rus", "russian"]:
         model_name = "Helsinki-NLP/opus-mt-en-ru"
     elif target_lang in ["zh", "chi", "chinese"]:

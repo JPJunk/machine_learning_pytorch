@@ -1,19 +1,8 @@
 # agent_tools/hash_tools.py - Hashing tools for files and text, with error handling and algorithm support.
 import os
-import logging
-
-# Configure logging to write to app.log in the project root directory
-_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-_LOG_FILE = os.path.join(_BASE_DIR, "app.log")
-
-logging.basicConfig(
-    filename=_LOG_FILE,
-    level=logging.INFO,
-    format="[%(asctime)s] %(levelname)s: %(message)s"
-)
-logger = logging.getLogger(__name__)
-
 import hashlib
+
+from .common import logger  # Use the shared logger from common.py
 from .common import sanitize_edge_metadata
 
 def hash_file(path: str, algo: str = "sha256") -> str:

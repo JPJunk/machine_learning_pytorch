@@ -1,19 +1,7 @@
 # agent_tools/symlink_tools.py
 import os
-import logging
-
-# Configure logging to write to app.log in the project root directory
-_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-_LOG_FILE = os.path.join(_BASE_DIR, "app.log")
-
-logging.basicConfig(
-    filename=_LOG_FILE,
-    level=logging.INFO,
-    format="[%(asctime)s] %(levelname)s: %(message)s"
-)
-logger = logging.getLogger(__name__)
-
 import subprocess
+from .common import logger  # Use the shared logger from common.py
 
 def create_symlink(target: str, link_path: str, is_directory: bool = False) -> str:
     """

@@ -1,21 +1,9 @@
 # agent_tools/embed_tools.py
 import os
-import logging
-
-# Configure logging to write to app.log in the project root directory
-_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-_LOG_FILE = os.path.join(_BASE_DIR, "app.log")
-
-logging.basicConfig(
-    filename=_LOG_FILE,
-    level=logging.INFO,
-    format="[%(asctime)s] %(levelname)s: %(message)s"
-)
-logger = logging.getLogger(__name__)
-
-import json
+import json, time
 from openai import OpenAI
 import numpy as np
+from .common import logger  # Use the shared logger from common.py
 from .common import sanitize_edge_metadata, EMBED_MODEL_NAME
 from .fs_tools import read_file, list_files
 from .database_tools import db_init, db_insert, db_query
@@ -23,7 +11,6 @@ from .database_tools import db_init, db_insert, db_query
 
 # Directly targets Ollama's local high-speed embedding endpoint
 LLAMA_EMBED_BASE_URL = os.getenv("LLAMA_EMBED_BASE_URL", "http://localhost:11434/v1")
-
 
 client = OpenAI(
     base_url=LLAMA_EMBED_BASE_URL,
@@ -36,17 +23,41 @@ def _get_raw_embedding(text: str) -> list:
     if not clean_text:
         logger.warning("Empty text provided for embedding")
         return []
-    try:
-        logger.info(f"Fetching embedding for text length {len(clean_text)} using model {EMBED_MODEL_NAME}")
-        resp = client.embeddings.create(
-            model=EMBED_MODEL_NAME, 
-            input=[clean_text]
-        )
-        logger.debug("Successfully retrieved embedding vector")
-        return resp.data[0].embedding
-    except Exception as e:
-        logger.error(f"Ollama embedding request failed: {e}")
-        return []
+    
+    for attempt in range(3):
+        try:
+            logger.info(f"Fetching embedding for text length {len(clean_text)} using model {EMBED_MODEL_NAME} (attempt {attempt+1})")
+            resp = client.embeddings.create(
+                model=EMBED_MODEL_NAME, 
+                input=[clean_text]
+            )
+            logger.debug("Successfully retrieved embedding vector")
+            return resp.data[0].embedding
+        except Exception as e:
+            err_str = str(e).lower()
+            if "503" in err_str or "loading model" in err_str or "not_implemented" in err_str:
+                logger.warning(f"[EMBED] Service unavailable/loading, retrying in 2s... ({err_str})")
+                time.sleep(2)
+            elif "invalid json" in err_str or "<html>" in err_str:
+                logger.warning(f"[EMBED] Invalid JSON/HTML response from proxy, retrying in 1s...")
+                time.sleep(1)
+            else:
+                logger.error(f"Ollama embedding request failed: {e}")
+                return []
+    logger.error(f"[EMBED] Max retries reached for text length {len(clean_text)}")
+    return []
+
+def test_embedding_generation(text: str) -> str:
+    """Test function to generate and log embedding for a given text."""
+    logger.info(f"Testing embedding generation for text: {text[:200]}...")
+    vec = _get_raw_embedding(text)
+    if vec:
+        logger.info(f"Embedding generated successfully. Vector length: {len(vec)}")
+        return f"Embedding generated successfully. Vector length: {len(vec)}"
+    else:
+        logger.error("Failed to generate embedding.")
+        return "Failed to generate embedding."
+    return vec
 
 def _compute_cosine(a: list, b: list) -> float:
     """Internal mathematical helper. Hidden from the LLM."""
@@ -151,7 +162,7 @@ def index_folder(folder_path: str) -> str:
 
 def search_embeddings(query_text: str, top_k: int = 5) -> str:
     """Query the local embedding DB for semantically similar content using cosine similarity."""
-    logger.info(f"Searching embeddings for query: {query_text[:50]}...")
+    logger.info(f"Searching embeddings for query: {query_text[:200]}...")
     
     query_vec = _get_raw_embedding(query_text)
     if not query_vec:

@@ -1,25 +1,23 @@
 # agent_tools/fs_tools.py - File system tools for the agent, including reading/writing files and handling PDFs.
 import os
-import logging
-
-# Configure logging to write to app.log in the project root directory
-_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-_LOG_FILE = os.path.join(_BASE_DIR, "app.log")
-
-logging.basicConfig(
-    filename=_LOG_FILE,
-    level=logging.INFO,
-    format="[%(asctime)s] %(levelname)s: %(message)s"
-)
-logger = logging.getLogger(__name__)
-
+import base64
+import uuid
 import shutil
 from pypdf import PdfReader
 
+from .common import logger  # Use the shared logger from common.py
 from .common import sanitize_edge_metadata
 
 # Maximum allowed file size for reading (10 MB) to prevent memory exhaustion
 MAX_FILE_SIZE = 10 * 1024 * 1024
+
+FILE_STORE = {}
+
+def store_content(content: str) -> dict:
+    ref = f"ref_{uuid.uuid4().hex}"
+    FILE_STORE[ref] = content
+    return {"ref": ref}
+
 
 def read_file(path: str) -> str:
     """Read a text file or extract raw text from a PDF file from disk safely."""
@@ -93,8 +91,9 @@ def read_file(path: str) -> str:
         logger.error(f"Failed to read file {clean_path}: {e}")
         return f"[ERROR] Failed to read file: {str(e)}"
 
-def write_file(path: str, content: str) -> str:
+def write_file(path: str, content_b64: str) -> str:
     """Write text content to a file, auto-creating directories if missing."""
+    content = base64.b64decode(content_b64).decode("utf-8")
     logger.info(f"Writing to file: {path} ({len(content)} bytes)")
     try:
         clean_path = sanitize_edge_metadata(path).strip('"').strip("'").replace("\\", "/")
@@ -111,8 +110,9 @@ def write_file(path: str, content: str) -> str:
         logger.error(f"Failed to write file {path}: {e}")
         return f"[ERROR] Failed to write file: {str(e)}"
 
-def append_file(path: str, content: str) -> str:
+def append_file(path: str, content_b64: str) -> str:
     """Append text content to a file, auto-creating directories if missing."""
+    content = base64.b64decode(content_b64).decode("utf-8")
     logger.info(f"Appending to file: {path} ({len(content)} bytes)")
     try:
         clean_path = sanitize_edge_metadata(path).strip('"').strip("'").replace("\\", "/")
